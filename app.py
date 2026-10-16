@@ -7,6 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from audio_sections import Cancelled, lua_string, prepare_queue, scan_media, resource_path
+from project_tools import integration_directory, write_project_tools, read_project_request, invalidate_latest, publish_batch
 
 
 def timestamp(seconds):
@@ -16,7 +17,7 @@ def timestamp(seconds):
 
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, project_folder=None):
         self.root = root
         root.title('Audio Sections · DaVinci Resolve')
         root.geometry('920x730')
@@ -26,6 +27,11 @@ class App:
         self.busy = False
         self.result = None
         self.batch = None
+        self.project_folder = Path(project_folder) if project_folder else integration_directory()
+        self.project_script = write_project_tools(self.project_folder)
+        request = self.project_folder / 'request.otio'
+        self.request_seen = request.stat().st_mtime_ns if request.exists() else 0
+        self.project_request = False
         self.vars = {key: tk.StringVar(value=value) for key, value in dict(
             source='', output='', threshold='-40', gap='1', fade='1', number='1',
             preset='Audio Sections High', audio='all').items()}
@@ -94,6 +100,7 @@ class App:
         self.copy_button.pack(side='left')
         self.folder_button = ttk.Button(bottom, text='Open batch folder', command=self.open_folder, state='disabled')
         self.folder_button.pack(side='left', padx=8)
+        ttk.Button(bottom, text='Connect project', command=self.connect_project).pack(side='right')
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.poll)
 
@@ -164,11 +171,28 @@ class App:
                 self.progress['value'] = 100
                 self.status.set(f'{len(sections)} sections found → {len(sections) * 2} render jobs. Review the boundaries above.')
                 self.prepare_button['state'] = 'normal' if sections else 'disabled'
+                if self.project_request and sections:
+                    self.prepare()
+                self.project_request = False
             elif kind == 'cancelled':
                 self.status.set('Scan cancelled.')
             else:
                 self.status.set('Scan failed. Adjust the settings or choose another file.')
                 messagebox.showerror('Scan failed', value)
+                self.project_request = False
+        request = self.project_folder / 'request.otio'
+        if not self.busy and request.exists() and request.stat().st_mtime_ns != self.request_seen:
+            self.request_seen = request.stat().st_mtime_ns
+            try:
+                source = read_project_request(request)
+                self.vars['source'].set(str(source))
+                if not self.vars['output'].get():
+                    self.vars['output'].set(str(source.parent / 'Audio Sections Exports'))
+                invalidate_latest(self.project_folder)
+                self.project_request = True
+                self.scan()
+            except (OSError, ValueError) as error:
+                self.status.set(str(error))
         self.root.after(100, self.poll)
 
     def prepare(self):
@@ -183,19 +207,29 @@ class App:
             self.batch = prepare_queue(inputs[0], self.vars['output'].get(), info, sections,
                                        int(self.vars['number'].get()), float(self.vars['fade'].get()),
                                        self.vars['preset'].get())
+            publish_batch(self.project_folder, self.batch)
         except (ValueError, OSError) as error:
             messagebox.showerror('Cannot prepare queue', str(error))
             return
         self.copy_button['state'] = 'normal'
         self.folder_button['state'] = 'normal'
         self.status.set('Batch ready. Copy the command, open Workspace > Console in Resolve, select Lua, paste and press Enter.')
-        self.copy_command()
+        if self.project_request:
+            self.status.set('Project batch ready. In Resolve run AudioSectionsQueue().')
+        else:
+            self.copy_command()
 
     def copy_command(self):
         command = 'dofile(' + lua_string((self.batch / 'queue.lua').as_posix()) + ')'
         self.root.clipboard_clear()
         self.root.clipboard_append(command)
-        self.status.set('Command copied. In Resolve: Workspace > Console → Lua → paste → Enter. Then review the Deliver queue.')
+        self.status.set('Batch ready. In a connected Resolve project run AudioSectionsQueue(), or paste the copied batch command.')
+
+    def connect_project(self):
+        command = 'dofile(' + lua_string(self.project_script.as_posix()) + ')'
+        self.root.clipboard_clear()
+        self.root.clipboard_append(command)
+        self.status.set('Connection command copied. Paste once in Resolve’s Lua Console. Then use AudioSectionsAnalyze() and AudioSectionsQueue().')
 
     def open_folder(self):
         os.startfile(self.batch)

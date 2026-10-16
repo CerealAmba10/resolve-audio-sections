@@ -30,7 +30,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual([j.settings.CustomName for j in jobs[1:]],
                          ["film ' é 1T", "film ' é 1", "film ' é 2T", "film ' é 2"])
         for i, job in enumerate(jobs[1:]):
-            self.assertEqual(job.settings.VideoQuality, 'High')
+            self.assertEqual(job.quality, 'High')
             self.assertTrue(job.settings.ExportAudio)
             self.assertEqual(job.timeline.video.fades.FadeOut, 24 if i % 2 == 0 else 0)
             self.assertEqual(job.timeline.audio.fades.FadeOut, 24 if i % 2 == 0 else 0)
@@ -65,3 +65,14 @@ class QueueTests(unittest.TestCase):
         (self.root / "film ' é 1.mp4").write_bytes(b'existing')
         with self.assertRaisesRegex(ValueError, 'Output already exists'):
             prepare_queue(self.source, self.root, {'fps': Fraction(24)}, [(5, 45)], 1, 1, 'Audio Sections High')
+
+    def test_resolve_free_has_no_io_library(self):
+        self.lua.execute('io=nil; os.execute=nil')
+        self.lua.execute(self.code)
+        self.assertEqual(len(self.lua.globals().state.jobs), 5)
+
+    def test_reuses_source_already_in_project_and_organizes_timelines(self):
+        self.lua.globals().state.existing_source = str(self.source)
+        self.lua.execute(self.code)
+        self.assertEqual(self.lua.globals().state.imports, 0)
+        self.assertEqual(self.lua.globals().state.bin, 'Audio Sections')

@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import threading
+import shutil
 from collections import deque
 from fractions import Fraction
 from pathlib import Path
@@ -207,6 +208,9 @@ def prepare_queue(source, output, info, sections, first_number, fade_seconds, pr
     output.mkdir(parents=True, exist_ok=True)
     folder = output / ('AudioSections-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     folder.mkdir()
+    preset_file = resource_path('integration/Audio Sections High.xml')
+    if preset.strip() == 'Audio Sections High' and preset_file.is_file():
+        shutil.copyfile(preset_file, folder / 'Audio Sections High.xml')
     manifest = dict(source=str(source), output=str(output), source_size=source.stat().st_size,
                     fps=str(info['fps']), preset=preset.strip(), sections=sections, jobs=jobs)
     (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
@@ -219,6 +223,7 @@ def prepare_queue(source, output, info, sections, first_number, fade_seconds, pr
     header = '\n'.join(['local SOURCE = ' + lua_string(source.as_posix()),
                         'local OUTPUT = ' + lua_string(output.as_posix()),
                         'local PRESET = ' + lua_string(preset.strip()),
+                        'local PRESET_FILE = ' + lua_string((folder / 'Audio Sections High.xml').as_posix()),
                         'local RECEIPT = ' + lua_string((folder / 'queued.txt').as_posix()),
                         f"local SOURCE_FPS = {float(info['fps']):.12g}", 'local JOBS = {'] +
                        [f'  {{name={lua_string(j["name"])}, first={j["start_frame"]}, last={j["end_frame"]}, fade={j["fade_seconds"]}}},'

@@ -5,4 +5,10 @@ dist/
 tools/
 *.spec
 test-output/
+integration/latest.lua
+integration/project_tools.lua
+integration/request.*
+integration/final_batch.txt
+integration/replace_debug_jobs.lua
+Audio Sections High.xml/
 

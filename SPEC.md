@@ -19,7 +19,7 @@ Use a saved Deliver preset named `Audio Sections High` for screenshot settings:
 MP4, H.264, Native, no network optimization, timeline resolution and frame rate,
 Auto profile, automatic keyframes, frame reordering on, Balanced preset,
 Quality rate control, High quality. Enable audio (AAC recommended). The script
-explicitly overrides quality to High and export audio/video to on. Unexposed
+preserves High through the verified bundled preset and forces export audio/video on. Unexposed
 encoder options come from this preset rather than guessed API keys.
 
 ## Design and implementation order
@@ -28,6 +28,12 @@ encoder options come from this preset rather than guessed API keys.
 2. Generate a standalone Lua 5.1 queue script and reviewable JSON/CSV manifest.
    Invoke from Resolve's internal Lua Console for Free edition compatibility.
 3. Desktop Tk interface, portable Windows executable and bundled FFmpeg tools.
+
+Follow-up: project-aware native OTIO handoff, automatic local analysis and batch
+publication, and short Console entry points AudioSectionsAnalyze()/AudioSectionsQueue().
+Free 21.1.1 ignores Scripts-menu execution and removes io/process launch functions;
+the scanner must remain running separately. Reuse imported source media and group
+generated timelines in an Audio Sections bin. Native append end frames are exclusive.
 
 Create a new timeline for each output and retain it so later changes cannot
 alter an earlier job's fades. Preserve existing timelines and jobs. Check
@@ -50,7 +56,7 @@ subprocess argument arrays (no shell). Example: `sections_from_silence(120, gaps
 Always test silence at start/end, fully silent/audio files, threshold length,
 short pauses, multiple tracks, frame rounding, naming and Lua escaping.
 Use real FFmpeg synthetic media and a Lua test double for render queue state.
-Do not claim a real Resolve render was verified unless it actually was.
+Live queue creation and fades verified in Resolve Free; no completed render verified.
 Never change user media, delete existing jobs, start renders or use networking
 at runtime. Ask before publishing or changing unrelated installed software.
 

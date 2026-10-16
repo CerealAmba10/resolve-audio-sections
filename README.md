@@ -7,20 +7,43 @@ the full section. Names are `originalfilename 1T.mp4`, `originalfilename 1.mp4`,
 
 ## Start here
 
-Open `AudioSections.exe` in the portable package. Keep the `_internal` folder
+Open `AudioSectionsV2.exe` in the updated portable package. Keep the `_internal` folder
 beside it. No Python installation, internet connection or account is required.
 Unzip the entire package before starting. Resolve does not have to be open
 while scanning. Resolve must be open with a project when queuing.
 
-This is a companion app with a Resolve script, rather than a Studio Workflow
-Integration. The free edition does not offer Studio's external scripting
-connection. The generated command runs through Resolve's internal **Lua Console**.
-This build was checked against your installed 21.1.1 SDK and tested with real
-FFmpeg media and a simulated Resolve project. Live queuing/rendering in your
-Free installation still needs verification. If Console scripting is unavailable,
-this program cannot add jobs to Resolve; it will still generate a clip manifest.
+This version has a project-aware workflow. It reuses source media already in
+your project and groups generated timelines in an **Audio Sections** Media Pool
+bin. Audio detection runs in the local app; project access and queuing run inside
+Resolve. In this Free 21.1.1 installation, Scripts-menu execution is ignored,
+standard Lua `io` is unavailable, and process launch functions are unavailable.
+The supported entry point is the internal **Lua Console**.
 
-## One-time Deliver preset setup
+## Work directly from your project
+
+1. Keep AudioSections open and click **Connect project**. Paste its copied command
+   into **Workspace > Console**, in Lua mode, once per Resolve session.
+2. Open a timeline containing one source recording. In the Console run
+   **`AudioSectionsAnalyze()`**. The app reads the recording path from Resolve's
+   native OTIO export and scans it automatically; you do not choose the file again.
+3. When the app says the batch is ready, run **`AudioSectionsQueue()`** in Resolve.
+   Teaser/full jobs are added to Deliver and their timelines are grouped in the
+   Audio Sections bin. Save the project and review the jobs before rendering.
+
+The scan uses the complete original recording, including portions trimmed out of
+the reference timeline. It does not render that timeline's titles, cuts or grades.
+For a timeline with several different source files, use the app's Browse workflow.
+If a previous pair already exists, choose a different start number before analyzing.
+
+Live queue creation, source reuse, native fades and High-quality preset retention
+have been checked in your Resolve Free 21.1.1 project. A completed video render
+has not been checked.
+
+## Deliver preset
+
+The verified **Audio Sections High** preset is bundled and imported automatically
+if it is missing. It has also been saved in your running Resolve installation.
+To recreate or customize it manually, use the settings below.
 
 In Resolve, open a project and timeline, then open **Deliver > Custom Export**.
 Set these options, matching the supplied screenshot with Quality changed to High:
@@ -48,8 +71,9 @@ show audio settings; choose the sample rate/bitrate you normally use.
 
 Use the render settings panel's preset menu to save a new preset named
 **Audio Sections High**. This preserves encoder controls that Resolve does not
-expose through its scripting API. The script explicitly applies High quality,
-video/audio export, timeline size/rate and no network optimization to every job.
+expose through its scripting API. Native H.264 in 21.1.1 rejects the documented
+`VideoQuality='High'` argument. The script retains High through the saved preset,
+then applies video/audio export, timeline size/rate and no network optimization.
 If you use a different preset name, enter that name in the scanner.
 
 ## Each recording
@@ -101,7 +125,9 @@ files that contain several separate recordings of the same signal.
 
 The app creates a dated batch folder inside the export folder containing:
 `manifest.json` (source sections and frame ranges), `clips.csv` (reviewable list),
-`queue.lua` (the Resolve script), and, after queuing, `queued.txt` (job IDs).
+`queue.lua` (the Resolve script), and the bundled render preset. A `queued.txt`
+receipt is written only where standard Lua file writing is available. Free
+edition uses session state and existing project timeline names to prevent repeats.
 
 Existing output files and same-name timelines are refused. To make another batch
 from the same source, use a new start number and/or export folder; existing
@@ -142,7 +168,10 @@ protocols; the application has no network calls or automatic update checks.
 Resolve API source: the Blackmagic SDK shipped with Resolve 21.1.1 at
 `C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer/Scripting/`.
 In particular, `DaVinciResolveScript.pyi` documents `TimelineItem.SetFades`,
-`RenderSettings.VideoQuality='High'` and the timeline/render queue methods.
+the timeline/render queue methods. Live testing also identified two differences
+from the generic SDK assumptions: Native H.264 rejects named VideoQuality values,
+and append source end frames are exclusive in this 21.1.1 build. Both are covered
+by regression tests.
 
 FFmpeg 9.0.2 Windows essentials build is bundled from
 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), a Windows build provider linked
