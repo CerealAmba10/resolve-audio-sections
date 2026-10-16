@@ -1,5 +1,24 @@
 # Changelog
 
+## Multi-track rewrite
+
+- Cut the open timeline instead of one source file, with any number of video and audio tracks.
+- New Audio Sections window: Primary/Background track roles, per-track silence levels with
+  auto-detection, live preview, zoom, frame-snapped trims and per-clip skip.
+- Detection uses 20 ms RMS envelopes rebuilt from each track's clips and channel routing, with
+  padding, click rejection and adjustable split length, instead of silencedetect on all streams.
+- Render full clips directly from the timeline with in/out marks, so every track, effect and
+  mix is kept. Cut teasers from the rendered clips with FFmpeg and check frame counts.
+- Remove the generated per-clip timelines, the old companion app and the Console workflow.
+
+## Compact distribution
+
+- Combine installer and helper into one executable, sharing the Python/Tk runtime.
+- Reuse installed FFmpeg/FFprobe or download a verified release during setup.
+- Keep media processing offline after installation, with no typed commands.
+- Retain the full offline package as an alternative.
+- Add dependency discovery, checksum, archive handling and offline-runtime tests.
+
 ## Native Sort and Render integration
 
 - Add a one-time installer and a native Workspace/Scripts command.

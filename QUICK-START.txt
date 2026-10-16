@@ -6,10 +6,11 @@ Click Install in DaVinci Resolve.
 
 EACH RECORDING
 1. Open your Resolve project.
-2. Select the original recording in the Media Pool.
-3. Workspace → Scripts → Audio Sections - Sort and Render.
+2. Open the timeline to cut.
+3. Workspace → Scripts → Audio Sections.
 
-Leave Resolve open. Sorting, queue creation and rendering happen automatically.
+Mark audio tracks Primary (cut around) or Background (ignore), check the
+preview, click Render. Leave Resolve open until it says done.
 Finished videos appear in Audio Sections Exports beside the original recording.
 
 1T = 30-second teaser with fade-out. 1 = full audio section.

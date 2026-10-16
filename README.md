@@ -1,39 +1,67 @@
 # Audio Sections for DaVinci Resolve
 
-One-click offline sorting and rendering for **Windows, Resolve Free 21.1.1**.
+Cut a long multi-track recording into clips and 30-second teasers, splitting at the
+silences in the tracks you choose. Offline, for **Windows, Resolve Free 21.1.1**.
 
 ## Install once
 
-1. Unzip **AudioSectionsPlugin-Windows-Offline.zip** completely.
-2. Open **Install Audio Sections.exe** and click **Install in DaVinci Resolve**.
+1. Unzip **AudioSectionsLite-Windows.zip** completely.
+2. Open **Audio Sections Setup.exe** and click **Install in DaVinci Resolve**.
 3. If the command does not appear immediately, restart Resolve.
 
-No Python installation, account or internet connection is needed. A quiet local
-helper starts when you sign in to Windows. Files install in **Documents → Audio
+No Python installation or account is needed. Setup reuses an existing FFmpeg and
+FFprobe pair from PATH/common install folders. If none is available, it downloads
+a verified FFmpeg build once; that setup step needs internet. Sorting and rendering
+work offline afterward. No commands need to be typed.
+
+The larger **AudioSectionsPlugin-Windows-Offline.zip** remains available for fully
+offline installation; its installer is named **Install Audio Sections.exe**.
+
+A quiet local helper starts when you sign in to Windows. Files install in **Documents → Audio
 Sections Plugin**, with a Resolve user Scripts command and a Windows Startup
 shortcut named **Audio Sections**.
 
-## Sort and render a recording
+## Cut a recording
 
-1. Open your project and select the **original recording in the Media Pool**.
-   Alternatively, open its timeline with the playhead over the recording.
-2. Choose **Workspace → Scripts → Audio Sections - Sort and Render**.
-3. Leave Resolve open while it scans and renders. Finished MP4s appear in
-   **Audio Sections Exports**, beside the original recording.
+1. Open the timeline you want to cut. It can have any number of video and audio
+   tracks, such as a facecam over gameplay, a separate mic file, music or Discord.
+   With no timeline open, select one recording in the Media Pool and a timeline
+   is made from it.
+2. Choose **Workspace → Scripts → Audio Sections**. The Audio Sections window opens
+   and scans every audio track. A 3-hour track takes about 45 seconds, and tracks scan in parallel.
+3. Mark each audio track as **Primary** (speech to cut around) or **Background**
+   (music, game sound or room noise to ignore). Choices are remembered by track name.
+4. Check the preview. Each track shows its level, with an orange line at its silence
+   level. Green blocks are the clips that will render; a dotted line marks where each
+   teaser ends. Grey blocks are too short.
+5. Click **Render N clips**. Leave Resolve open until the window says it is done.
 
-The command scans the entire original recording, creates a teaser/full pair for
-each audio section longer than 30 seconds, queues the pair, saves your project,
-and starts rendering **only the new jobs**. Generated timelines appear in the
-**Audio Sections** Media Pool bin. Existing edits and queue jobs remain.
+| Control | What it does |
+| --- | --- |
+| Silence below (per track) | Level counted as silence. **Auto** sets it from that track's own noise floor and speech level. You can also drag the orange line. |
+| Split at silence of at least | Shorter pauses stay inside a clip. Raise it for long recordings so normal pauses do not split a clip. |
+| Padding around speech | Extra room before the first word and after the last, never past the middle of a gap. |
+| Ignore sounds shorter than | Clicks and pops in a silence do not start a clip. |
+| Keep clips longer than | Shorter sections are shown but not rendered. |
+| Teaser length / fade | Teaser duration and the fade-out at its end. |
 
-| Output | Name | Added fade |
-| --- | --- | --- |
-| First 30 seconds | `originalfilename 1T.mp4` | Last second fades to black and silence |
-| Complete audio section | `originalfilename 1.mp4` | None |
+Mouse wheel zooms the preview; drag to scroll. Drag a green clip edge to trim it,
+snapped to whole frames. Double-click a row to skip or include that clip. Changing
+a setting re-cuts instantly from the scanned levels and resets manual trims.
 
-Further pairs use 2T/2, 3T/3, etc. Repeating the command scans again and chooses
-the next unused number from project timelines and existing exports. It creates
-another batch; it does not overwrite an earlier one.
+Resolve renders each full clip straight from your timeline using in/out marks, so every
+video track, audio track, effect, transform, grade and mixer setting is included as you
+see and hear it. Each teaser is then cut from its full clip, with the last second fading
+to black and silence.
+
+| Output | Name |
+| --- | --- |
+| Complete section | `name 1.mp4` |
+| First 30 seconds, faded | `name 1T.mp4` |
+
+Numbering continues after the highest number already in the export folder or render
+queue. Existing files are never overwritten. The default name and folder come from the
+main recording ("Audio Sections Exports" beside it); both can be changed in the window.
 
 ## Export settings
 
@@ -56,38 +84,32 @@ for the bundled preset. Native H.264 rejects the documented named VideoQuality
 argument, so High is retained through the verified saved preset. Keep that preset
 unchanged for consistent exports.
 
-## Detection and project behavior
+## How detection works
 
-The simple menu workflow uses **-40 dBFS**, a **1-second minimum silence**, all
-embedded audio streams, and a **1-second teaser fade**. A gap must be silent in
-every audio stream. Stereo channels are not mixed during detection. Clips begin
-where the preceding silence ends and end where the next silence starts; shorter
-pauses stay in the clip. File start/end are boundaries where needed.
+Each audio track is rebuilt over timeline time from its clips: the source file, in-point,
+timeline position and Resolve's channel routing for that clip. Every 20 ms FFmpeg measures
+the RMS level of the routed channels together, so stereo antiphase cannot cancel out.
+Disabled clips and muted channel mappings count as silence. A moment is speech when
+**any** primary track is above its own silence level. Background tracks are scanned and
+shown but never affect the cuts.
 
-FFmpeg streams the recording without loading hours of audio into memory or
-decoding video during detection. Nothing is uploaded. Teasers use whole frames;
-fractional frame rates can differ from 30 seconds by less than one frame.
+Nothing is uploaded. Source files, existing exports and the timeline are never changed.
+If the timeline is edited while the window is open, rendering is refused; run it again.
+Each run's timeline description and chosen clips are saved in
+Documents → Audio Sections Plugin → batches.
 
-This processes **source media**, including portions trimmed out of the current
-timeline. Timeline cuts, titles, grades, effects and mixer adjustments are not
-copied. Keep source media online until rendering ends. Audio uses Resolve's media
-mapping; multiple recordings of the same signal may need Clip Attributes/audio
-mapping adjusted before running.
-
-Use constant-frame-rate video with matching audio/video start times. Obvious
-variable-rate metadata and differing start times are rejected. Metadata cannot
-identify every variable-rate recording; normalize such recordings first.
+Retimed (speed-changed) audio clips are detected approximately; the window warns about them.
 
 ## Help
 
 - **No menu command:** restart Resolve after installation.
 - **Helper stopped:** run the installer again, then retry the command.
-- **No qualifying sections:** no audio section exceeds 30 seconds under the
-  fixed silence settings.
+- **No clips, or clips split too often:** raise "Split at silence of at least", or
+  lower a primary track's silence level. Check that the right tracks are Primary.
 - **Stop:** use the Audio Sections progress window or Resolve's render Stop
   button. Completed exports and generated timelines remain available.
 - **Disable automatic startup:** disable Audio Sections in Task Manager → Startup
-  apps. To remove the command, delete only `Audio Sections - Sort and Render.lua`
+  apps. To remove the command, delete only `Audio Sections.lua`
   from your Resolve user Scripts/Utility folder. Helper files are in
   Documents → Audio Sections Plugin.
 
@@ -96,17 +118,22 @@ this plugin package for the simple menu workflow.
 
 ## Verification and development
 
-Verified from Resolve's native menu in **Free 21.1.1.10**: source reuse, automatic
-numbering, isolated jobs, High quality, project save, and completed teaser/full
-renders. The teaser has exactly 720 frames at 24 fps. Decoded output confirms
-both picture and audio fade in the final second. See VALIDATION.md for details.
+The multi-track rewrite is tested against a fake Resolve, with real FFmpeg on
+multi-stream media, and with its window driven on the duck test recording. FFmpeg
+teasers are exactly 720 frames at 24 fps, and their decoded fade matches the
+previously verified Resolve fade. It has **not yet run inside Resolve**. VALIDATION.md
+records the live checks for the previous single-file version.
 
-Runtime code uses Python's standard library. Python, Tk, FFmpeg and FFprobe are
-bundled. Development tests additionally require lupa; packaging uses PyInstaller.
+Runtime code uses Python's standard library. The compact package combines setup
+and helper in one executable, sharing Python and Tk. FFmpeg/FFprobe stay external;
+their absolute paths are saved locally. It never downloads during a media scan.
+The pinned setup download uses HTTPS and a verified SHA256 before named files are
+copied from the archive. Development tests require lupa; packaging uses PyInstaller.
 
 ```
 python -m unittest discover -s tests -v
 powershell -File build_plugin.ps1
+powershell -File build_lite.ps1
 ```
 
 The installed Blackmagic SDK is the API reference:
@@ -116,10 +143,11 @@ following the transport documented by the
 [AutoSubs integration](https://github.com/tmoroney/auto-subs/blob/main/Resolve-Integration/README.md).
 It does not modify AutoSubs or Resolve security settings.
 
-FFmpeg 9.0.2 Windows essentials comes from
+The fallback FFmpeg 9.0.2 Windows essentials download comes from
 [Gyan](https://www.gyan.dev/ffmpeg/builds/), a provider linked by
 [FFmpeg](https://ffmpeg.org/download.html). See FFmpeg-LICENSE.txt and
-FFmpeg-README.txt in the package for build/source instructions. Corresponding
+FFmpeg-README.txt in the full package, or LICENSE/README.txt in the downloaded
+tools folder, for build/source instructions. Corresponding
 [FFmpeg source](https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz) and the
-[silencedetect reference](https://ffmpeg.org/ffmpeg-filters.html#silencedetect)
+[astats reference](https://ffmpeg.org/ffmpeg-filters.html#astats-1)
 are available upstream. Runtime protocols are limited to local files and pipes.

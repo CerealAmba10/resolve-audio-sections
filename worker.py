@@ -1,124 +1,236 @@
-"""Quiet background helper; a simple progress window appears only for a menu request."""
+"""Background helper: receives a timeline from Resolve, opens the editor, then finishes teasers."""
+import base64
 import ctypes
+import json
 import os
-import queue
+import re
+import shutil
 import sys
 import threading
+import queue
 import time
 import tkinter as tk
+from datetime import datetime
+from fractions import Fraction
 from pathlib import Path
 from tkinter import ttk
 
-from audio_sections import Cancelled
-from worker_core import atomic_text, read_pref, sort_recording, write_state
+from editor import Editor
+from media import frame_count, make_teaser, resource_path
+
+PRESET = 'Audio Sections High'
 
 
 def home_directory():
     return Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent / 'test-output/native-worker'
 
 
+def read_pref(path, key):
+    try:
+        text = Path(path).read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return None
+    match = re.search(r'\b' + re.escape(key) + r'\s*=\s*"([A-Za-z0-9+/=]+)"', text)
+    if not match:
+        return None
+    try:
+        value = json.loads(base64.b64decode(match.group(1), validate=True))
+        return value if isinstance(value, dict) else None
+    except ValueError:
+        return None
+
+
+def resolve_heartbeat(path):
+    try:
+        match = re.search(r'AudioSectionsHeartbeatV1\s*=\s*(\d+)', Path(path).read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        return 0
+    return int(match.group(1)) if match else 0
+
+
+def lua_value(value):
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, dict):
+        return '{' + ','.join(f'[{lua_value(str(k))}]={lua_value(v)}' for k, v in value.items()) + '}'
+    if isinstance(value, (list, tuple)):
+        return '{' + ','.join(lua_value(v) for v in value) + '}'
+    return '"' + ''.join('\\' + ch if ch in '"\\' else f'\\{ord(ch):03d}' if ord(ch) < 32 else ch
+                         for ch in str(value)) + '"'
+
+
+def atomic_text(path, text):
+    path = Path(path)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(text, encoding='utf-8')
+    for attempt in range(10):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.01)
+
+
+def write_state(home, request_id, status, **fields):
+    atomic_text(Path(home) / 'state.lua', 'return ' + lua_value(dict(id=request_id, status=status, **fields)) + '\n')
+
+
+def finish_teasers(batch, cancel, progress):
+    """Cut each teaser from its rendered full clip and check the full clip's length."""
+    fps, output, warnings = Fraction(batch['fps']), Path(batch['output']), []
+    for n, job in enumerate(batch['jobs']):
+        if cancel.is_set():
+            break
+        full = output / (job['name'] + '.mp4')
+        if not full.is_file():
+            raise ValueError(f'Resolve did not produce {full.name}.')
+        frames = frame_count(full)
+        if frames is not None and frames != job['frames']:
+            warnings.append(f"{full.name}: {frames} frames rendered, {job['frames']} expected.")
+        progress(n / len(batch['jobs']), f"Making teaser {job['teaser']}.mp4")
+        make_teaser(full, output / (job['teaser'] + '.mp4'), batch['teaser_frames'], fps, batch['fade'])
+    return warnings
+
+
 class Worker:
     def __init__(self, home):
         self.home = Path(home)
         self.home.mkdir(parents=True, exist_ok=True)
+        preset = resource_path(f'integration/{PRESET}.xml')
+        if preset.is_file():
+            shutil.copyfile(preset, self.home / f'{PRESET}.xml')
+        self.settings_file = self.home / 'settings.json'
+        try:
+            self.settings = json.loads(self.settings_file.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            self.settings = {}
         self.prefs = Path(os.environ['APPDATA']) / 'Blackmagic Design/DaVinci Resolve/Support/Fusion/Profiles/Default/Fusion.prefs'
-        previous = read_pref(self.prefs, 'AudioSectionsRequestV1') or {}
-        self.seen = previous.get('id')
+        self.seen = (read_pref(self.prefs, 'AudioSectionsRequestV2') or {}).get('id')
         self.result_seen = (read_pref(self.prefs, 'AudioSectionsResultV1') or {}).get('id')
-        self.request = None
-        self.busy = False
+        self.request = self.batch = None
+        self.stage = 'idle'     # idle → editing → rendering → teasers → idle
         self.cancel = threading.Event()
         self.events = queue.Queue()
         self.root = tk.Tk()
-        self.root.title('Audio Sections')
-        self.root.geometry('470x210')
-        self.root.resizable(False, False)
         self.root.withdraw()
-        frame = ttk.Frame(self.root, padding=24)
+        ttk.Style().theme_use('vista' if 'vista' in ttk.Style().theme_names() else 'clam')
+        self.window = tk.Toplevel(self.root)
+        self.window.title('Audio Sections')
+        self.window.geometry('480x210')
+        self.window.resizable(False, False)
+        self.window.withdraw()
+        self.window.protocol('WM_DELETE_WINDOW', self.window.withdraw)
+        frame = ttk.Frame(self.window, padding=24)
         frame.pack(fill='both', expand=True)
-        self.title = tk.StringVar(value='Sorting your recording')
-        self.message = tk.StringVar(value='Looking for audio sections…')
-        ttk.Label(frame, textvariable=self.title, font=('Segoe UI', 17, 'bold')).pack(anchor='w')
-        ttk.Label(frame, textvariable=self.message, wraplength=420).pack(anchor='w', pady=(10, 16))
+        self.title = tk.StringVar()
+        self.message = tk.StringVar()
+        ttk.Label(frame, textvariable=self.title, font=('Segoe UI', 16, 'bold')).pack(anchor='w')
+        ttk.Label(frame, textvariable=self.message, wraplength=430).pack(anchor='w', pady=(10, 16))
         self.progress = ttk.Progressbar(frame, maximum=100)
         self.progress.pack(fill='x')
         self.button = ttk.Button(frame, text='Stop', command=self.stop)
         self.button.pack(anchor='e', pady=(14, 0))
-        self.root.protocol('WM_DELETE_WINDOW', self.root.withdraw)
         self.root.after(250, self.poll)
+
+    def show(self, title, message, progress=0, button=('Stop', None)):
+        self.title.set(title)
+        self.message.set(message)
+        self.progress['value'] = progress
+        self.button.configure(text=button[0], command=button[1] or self.stop)
+        self.window.deiconify()
+        self.window.lift()
+
+    def done(self, title, message, folder=None):
+        self.stage = 'idle'
+        self.show(title, message, 100 if folder else 0,
+                  ('Open export folder', lambda: os.startfile(folder)) if folder else ('Close', self.window.withdraw))
 
     def stop(self):
         self.cancel.set()
         if self.request:
-            write_state(self.home, self.request['id'], 'cancelled', 'Stopped.', cancel=True)
+            write_state(self.home, self.request['id'], 'cancelled', cancel=True)
         self.message.set('Stopping…')
 
-    def start(self, request):
-        self.request = request
-        self.seen = request['id']
-        self.busy = True
+    def open_editor(self, request):
+        self.request, self.seen, self.stage = request, request['id'], 'editing'
         self.cancel.clear()
-        self.progress['value'] = 0
-        self.title.set('Sorting your recording')
-        self.message.set('Looking for audio sections…')
-        self.button.configure(text='Stop', command=self.stop)
-        self.root.deiconify()
-        self.root.lift()
-        write_state(self.home, self.seen, 'scanning')
+        self.window.withdraw()
+        write_state(self.home, request['id'], 'editing')
+        try:
+            Editor(self.root, request, self.settings, self.render, self.cancelled)
+        except Exception as error:
+            write_state(self.home, request['id'], 'error', message=f'Could not read the timeline: {error}')
+            self.done('Could not open', str(error))
+
+    def cancelled(self):
+        write_state(self.home, self.request['id'], 'cancelled')
+        self.stage = 'idle'
+
+    def render(self, batch):
+        self.batch = batch
+        self.stage = 'rendering'
+        try:
+            self.settings_file.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
+        except OSError:
+            pass
+        batches = self.home / 'batches'
+        batches.mkdir(exist_ok=True)
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        (batches / f'{stamp}.json').write_text(json.dumps(dict(request=self.request, batch=batch), indent=1), encoding='utf-8')
+        jobs = [dict(name=j['name'], mark_in=j['mark_in'], mark_out=j['mark_out']) for j in batch['jobs']]
+        write_state(self.home, self.request['id'], 'ready', preset=PRESET, output=Path(batch['output']).as_posix(), jobs=jobs)
+        self.last_update = time.time()
+        self.show('Rendering your clips', f'Queuing {len(jobs)} clips in Resolve…')
+
+    def teasers(self):
+        self.stage = 'teasers'
+        self.show('Making teasers', 'Cutting teasers from the rendered clips…', 0)
         def work():
             try:
-                count, output = sort_recording(request, self.home, self.cancel,
-                    lambda value: self.events.put(('progress', value)))
-                self.events.put(('ready', (count, output)))
-            except Cancelled:
-                self.events.put(('cancelled', 'Stopped.'))
+                warnings = finish_teasers(self.batch, self.cancel,
+                                          lambda f, m: self.events.put(('progress', (f, m))))
+                self.events.put(('finished', warnings))
             except Exception as error:
                 self.events.put(('error', str(error)))
         threading.Thread(target=work, daemon=True).start()
 
     def poll(self):
-        if (self.home / 'shutdown.request').exists() and not self.busy:
+        if (self.home / 'shutdown.request').exists() and self.stage == 'idle':
             (self.home / 'worker.stopped').write_text('stopped', encoding='utf-8')
             self.root.destroy()
             return
         atomic_text(self.home / 'heartbeat.lua', f'return {{time={int(time.time())}}}\n')
         while not self.events.empty():
             kind, value = self.events.get_nowait()
-            if self.cancel.is_set() and kind in ('progress', 'ready'):
-                continue
             if kind == 'progress':
-                self.progress['value'] = value * 100
-                write_state(self.home, self.seen, 'scanning', progress=value * 100)
-            elif kind == 'ready':
-                self.count, self.output = value
-                self.message.set(f'{self.count} clips found. Adding them to Resolve…')
-                write_state(self.home, self.seen, 'ready')
+                self.progress['value'] = value[0] * 100
+                self.message.set(value[1])
+            elif kind == 'finished':
+                count = len(self.batch['jobs'])
+                note = '\n\nCheck: ' + ' '.join(value) if value else ''
+                self.done('All done' if not self.cancel.is_set() else 'Stopped',
+                          f'{count} clips and {count} teasers saved.{note}', self.batch['output'])
             else:
-                self.busy = False
-                self.title.set('Stopped' if kind == 'cancelled' else 'Could not finish')
-                self.message.set(value)
-                self.button.configure(text='Close', command=self.root.withdraw)
-                write_state(self.home, self.seen, kind, value)
+                self.done('Could not finish', value)
         result = read_pref(self.prefs, 'AudioSectionsResultV1')
-        if result and result.get('status') == 'error' and result.get('id') != self.result_seen:
+        if result and result.get('id') != self.result_seen and result.get('status') in ('error', 'complete'):
             self.result_seen = result.get('id')
-            self.root.deiconify()
-            self.title.set('Could not finish')
-            self.message.set(result.get('message', ''))
-            self.button.configure(text='Close', command=self.root.withdraw)
-        if self.busy and result and result.get('id') == self.seen:
+            if result['status'] == 'error' and self.stage != 'teasers':
+                self.done('Could not finish', result.get('message', ''))
+            elif result['status'] == 'complete' and self.stage == 'rendering' and result['id'] == self.seen:
+                self.teasers()
+        elif self.stage == 'rendering' and result and result.get('id') == self.seen and result.get('status') == 'rendering':
             self.message.set(result.get('message', ''))
             self.progress['value'] = result.get('progress', 0)
-            if result['status'] == 'rendering':
-                self.title.set('Rendering your clips')
-            elif result['status'] in ('complete', 'error'):
-                self.busy = False
-                self.title.set('All done' if result['status'] == 'complete' else 'Could not finish')
-                self.button.configure(text='Open export folder' if result['status'] == 'complete' else 'Close',
-                    command=(lambda: os.startfile(self.output)) if result['status'] == 'complete' else self.root.withdraw)
-        request = read_pref(self.prefs, 'AudioSectionsRequestV1')
-        if not self.busy and request and request.get('id') != self.seen:
-            self.start(request)
+        if self.stage == 'rendering' and time.time() - max(self.last_update, resolve_heartbeat(self.prefs)) > 90:
+            self.done('Could not finish', 'Resolve stopped responding. Check its render queue, then run Audio Sections again.')
+        request = read_pref(self.prefs, 'AudioSectionsRequestV2')
+        if self.stage == 'idle' and request and request.get('id') != self.seen:
+            self.open_editor(request)
         self.root.after(500, self.poll)
 
 
@@ -129,6 +241,10 @@ def main():
     mutex = kernel.CreateMutexW(None, False, 'Local\\AudioSectionsWorkerV3')
     if kernel.GetLastError() == 183:
         return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        pass
     try:
         Worker(home_directory()).root.mainloop()
     finally:

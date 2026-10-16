@@ -1,72 +1,45 @@
-import math
+"""Real FFmpeg checks: channel routing across streams and placement on timeline time."""
+import shutil
+import subprocess
 import tempfile
 import unittest
-import wave
+from fractions import Fraction
 from pathlib import Path
-from threading import Event
 
-from audio_sections import scan_media, Cancelled, prepare_queue
+import detection as d
+import media
 
 
-class MediaTests(unittest.TestCase):
+@unittest.skipUnless(shutil.which('ffmpeg'), 'needs ffmpeg on PATH')
+class MediaTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.temp.name)
-        cls.media = cls.root / "test ' unicode é.wav"
-        with wave.open(str(cls.media), 'wb') as out:
-            out.setparams((2, 2, 8000, 0, 'NONE', 'not compressed'))
-            for second in range(102):
-                active = 5 <= second < 45 or 55 <= second < 95
-                samples = bytearray()
-                for n in range(8000):
-                    value = int(12000 * math.sin(2 * math.pi * 440 * n / 8000)) if active else 0
-                    samples.extend(value.to_bytes(2, 'little', signed=True))
-                    samples.extend((-value).to_bytes(2, 'little', signed=True))
-                out.writeframes(samples)
-        import subprocess
-        cls.video = cls.root / 'film é.mkv'
-        subprocess.run([str(Path('tools/ffmpeg.exe').resolve()), '-v', 'error', '-f', 'lavfi',
-                        '-i', 'color=c=red:s=64x64:r=24:d=102', '-i', str(cls.media),
-                        '-c:v', 'mpeg4', '-c:a', 'pcm_s16le', '-shortest', str(cls.video)], check=True)
-        cls.multi = cls.root / 'multi.mkv'
-        subprocess.run([str(Path('tools/ffmpeg.exe').resolve()), '-v', 'error', '-i', str(cls.video),
-                        '-f', 'lavfi', '-i', r'aevalsrc=if(between(t\,45\,55)\,0.5*sin(2*PI*440*t)\,0):s=8000:d=102',
-                        '-map', '0:v', '-map', '0:a', '-map', '1:a', '-c:v', 'copy', '-c:a', 'pcm_s16le',
-                        str(cls.multi)], check=True)
+        # Stream 0 (stereo): tone only during 4-6 s. Stream 1 (mono): steady noise the whole time.
+        cls.folder = Path(tempfile.mkdtemp())
+        cls.path = cls.folder / 'two streams.mkv'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=f=440:d=10,volume=0.5,'
+                        "volume='between(t,4,6)':eval=frame,aformat=channel_layouts=stereo",
+                        '-f', 'lavfi', '-i', 'anoisesrc=d=10:a=0.1,aformat=channel_layouts=mono',
+                        '-map', '0', '-map', '1', '-c:a', 'pcm_s16le', str(cls.path)], check=True)
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.temp.cleanup()
+    def active(self, mapping, source=0.0, at=24, frames=240):
+        item = dict(path=str(self.path), start=at, end=at + frames, source_seconds=source, mapping=mapping)
+        env = media.track_envelope(dict(items=[item]), dict(fps=Fraction(24), start=0, end=at + frames))
+        return [(round(a, 1), round(b, 1)) for a, b in d.active_runs([env], [-40])]
 
-    def test_real_scan_preserves_antiphase_audio_and_trims_gaps(self):
-        info, sections = scan_media(self.video, -40, 1, 'all', Event(), lambda _: None)
-        self.assertEqual(str(info['fps']), '24')
-        self.assertEqual(len(sections), 2)
-        for actual, expected in zip(sections, [(5, 45), (55, 95)]):
-            self.assertAlmostEqual(actual[0], expected[0], delta=0.02)
-            self.assertAlmostEqual(actual[1], expected[1], delta=0.02)
-        folder = prepare_queue(self.video, self.root, info, sections, 1, 1, 'Audio Sections High')
-        self.assertTrue((folder / 'queue.lua').is_file())
-        self.assertTrue((folder / 'clips.csv').is_file())
+    def test_mapping_selects_stream_channels(self):
+        voice = '{"track_mapping":{"1":{"channel_idx":[1,2],"mute":false,"type":"Stereo"}}}'
+        noise = '{"track_mapping":{"1":{"channel_idx":[3],"mute":false,"type":"Mono"}}}'
+        self.assertEqual(self.active(voice, frames=216), [(5.0, 7.0)])   # item placed 1 s into the timeline
+        self.assertEqual(self.active(noise, frames=216), [(1.0, 10.0)])
+        self.assertEqual(self.active('{"track_mapping":{"1":{"channel_idx":[1,2],"mute":true}}}'), [])
 
-    def test_cancel_and_missing_audio_rejected(self):
-        cancelled = Event()
-        cancelled.set()
-        with self.assertRaises(Cancelled):
-            scan_media(self.video, -40, 1, 'all', cancelled, lambda _: None)
-        with self.assertRaisesRegex(ValueError, 'video file'):
-            scan_media(self.media, -40, 1, 'all', Event(), lambda _: None)
+    def test_source_offset_and_unknown_mapping(self):
+        # Item uses source 3-8 s at timeline 1 s, so the tone (source 4-6 s) lands at 2-4 s.
+        self.assertEqual(self.active(None, source=3.0, frames=120), [(1.0, 6.0)])   # all channels incl. noise
+        voice = '{"track_mapping":{"1":{"channel_idx":[1,2],"mute":false,"type":"Stereo"}}}'
+        self.assertEqual(self.active(voice, source=3.0, frames=120), [(2.0, 4.0)])
 
-    def test_multiple_audio_streams_bridge_a_gap(self):
-        _, sections = scan_media(self.multi, -40, 1, 'all', Event(), lambda _: None)
-        self.assertEqual(len(sections), 1)
-        self.assertAlmostEqual(sections[0][0], 5, delta=0.02)
-        self.assertAlmostEqual(sections[0][1], 95, delta=0.02)
-        _, first_only = scan_media(self.multi, -40, 1, '0', Event(), lambda _: None)
-        self.assertEqual(len(first_only), 2)
 
-    def test_invalid_settings(self):
-        for threshold, gap in [(0, 1), (-40, 0), (float('nan'), 1)]:
-            with self.assertRaises(ValueError):
-                scan_media(self.video, threshold, gap, 'all', Event(), lambda _: None)
+if __name__ == '__main__':
+    unittest.main()

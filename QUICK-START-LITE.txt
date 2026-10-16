@@ -1,0 +1,18 @@
+Audio Sections — small package
+
+1. Unzip this package.
+2. Open Audio Sections Setup.exe and click Install in DaVinci Resolve.
+   It reuses FFmpeg when installed, or downloads it once if missing.
+   Internet is needed only for that first dependency download.
+3. In Resolve, open the timeline to cut.
+4. Workspace → Scripts → Audio Sections.
+
+Mark audio tracks Primary (cut around) or Background (ignore), check the
+preview, click Render. Everything works offline.
+Finished MP4s appear in Audio Sections Exports beside the original recording.
+
+1T = 30-second teaser with fade-out. 1 = full audio section.
+Further pairs use 2T/2, 3T/3, etc. Existing exports are preserved.
+
+No Python setup, Console commands or account is needed.
+If the menu is missing, restart Resolve after installation.
