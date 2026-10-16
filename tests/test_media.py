@@ -29,6 +29,11 @@ class MediaTests(unittest.TestCase):
         subprocess.run([str(Path('tools/ffmpeg.exe').resolve()), '-v', 'error', '-f', 'lavfi',
                         '-i', 'color=c=red:s=64x64:r=24:d=102', '-i', str(cls.media),
                         '-c:v', 'mpeg4', '-c:a', 'pcm_s16le', '-shortest', str(cls.video)], check=True)
+        cls.multi = cls.root / 'multi.mkv'
+        subprocess.run([str(Path('tools/ffmpeg.exe').resolve()), '-v', 'error', '-i', str(cls.video),
+                        '-f', 'lavfi', '-i', r'aevalsrc=if(between(t\,45\,55)\,0.5*sin(2*PI*440*t)\,0):s=8000:d=102',
+                        '-map', '0:v', '-map', '0:a', '-map', '1:a', '-c:v', 'copy', '-c:a', 'pcm_s16le',
+                        str(cls.multi)], check=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -50,6 +55,16 @@ class MediaTests(unittest.TestCase):
         cancelled.set()
         with self.assertRaises(Cancelled):
             scan_media(self.video, -40, 1, 'all', cancelled, lambda _: None)
+        with self.assertRaisesRegex(ValueError, 'video file'):
+            scan_media(self.media, -40, 1, 'all', Event(), lambda _: None)
+
+    def test_multiple_audio_streams_bridge_a_gap(self):
+        _, sections = scan_media(self.multi, -40, 1, 'all', Event(), lambda _: None)
+        self.assertEqual(len(sections), 1)
+        self.assertAlmostEqual(sections[0][0], 5, delta=0.02)
+        self.assertAlmostEqual(sections[0][1], 95, delta=0.02)
+        _, first_only = scan_media(self.multi, -40, 1, '0', Event(), lambda _: None)
+        self.assertEqual(len(first_only), 2)
 
     def test_invalid_settings(self):
         for threshold, gap in [(0, 1), (-40, 0), (float('nan'), 1)]:

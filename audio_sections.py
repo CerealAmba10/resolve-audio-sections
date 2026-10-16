@@ -89,7 +89,7 @@ def run_args(args, **kwargs):
 
 
 def probe_media(source):
-    result = run_args([str(resource_path('tools/ffprobe.exe')), '-v', 'error', '-show_streams',
+    result = run_args([str(resource_path('tools/ffprobe.exe')), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-show_streams',
                        '-show_format', '-of', 'json', str(source)], capture_output=True,
                       encoding='utf-8', errors='replace', timeout=60)
     if result.returncode:
@@ -101,8 +101,11 @@ def probe_media(source):
     if not videos or not audios:
         raise ValueError('Choose a video file with at least one audio stream.')
     video = videos[0]
-    fps = Fraction(video.get('avg_frame_rate', '0/1'))
-    nominal = Fraction(video.get('r_frame_rate', '0/1'))
+    try:
+        fps = Fraction(video.get('avg_frame_rate', '0/1'))
+        nominal = Fraction(video.get('r_frame_rate', '0/1'))
+    except (ValueError, ZeroDivisionError):
+        raise ValueError('Unknown frame rate. Convert to constant frame rate before scanning.') from None
     if fps <= 0 or nominal <= 0 or abs(float(fps / nominal) - 1) > 0.001:
         raise ValueError('Variable or unknown frame rate. Convert to constant frame rate before scanning.')
     duration = float(video.get('duration', data.get('format', {}).get('duration', 0)))
@@ -111,11 +114,12 @@ def probe_media(source):
     start = float(video.get('start_time', 0))
     if any(abs(float(a.get('start_time', start)) - start) > 0.05 for a in audios):
         raise ValueError('Audio/video streams have different start times. Normalize the file before scanning.')
-    return dict(fps=fps, duration=duration, audios=audios, width=video['width'], height=video['height'])
+    return dict(fps=nominal, duration=duration, audios=audios, width=video['width'], height=video['height'])
 
 
 def detect_track(source, index, duration, threshold, gap, cancel, progress):
     args = [str(resource_path('tools/ffmpeg.exe')), '-hide_banner', '-nostdin', '-nostats',
+            '-protocol_whitelist', 'file,pipe',
             '-xerror', '-i', str(source), '-map', f'0:a:{index}', '-vn', '-sn', '-dn',
             '-af', f'asetpts=PTS-STARTPTS,silencedetect=noise={threshold}dB:d={gap}',
             '-progress', 'pipe:2', '-f', 'null', '-']
@@ -216,7 +220,6 @@ def prepare_queue(source, output, info, sections, first_number, fade_seconds, pr
                         'local OUTPUT = ' + lua_string(output.as_posix()),
                         'local PRESET = ' + lua_string(preset.strip()),
                         'local RECEIPT = ' + lua_string((folder / 'queued.txt').as_posix()),
-                        f"local SOURCE_SIZE = {source.stat().st_size}",
                         f"local SOURCE_FPS = {float(info['fps']):.12g}", 'local JOBS = {'] +
                        [f'  {{name={lua_string(j["name"])}, first={j["start_frame"]}, last={j["end_frame"]}, fade={j["fade_seconds"]}}},'
                         for j in jobs] + ['}', ''])

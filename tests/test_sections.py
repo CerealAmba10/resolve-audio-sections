@@ -38,6 +38,11 @@ class SectionTests(unittest.TestCase):
     def test_lua_escaping(self):
         self.assertEqual(lua_string('x"\\\n'), '"x\\"\\\\\\010"')
 
+    def test_multi_hour_frame_offsets(self):
+        jobs = frame_jobs('recording.mp4', [(18000, 18120)], Fraction(60), 1, 1)
+        self.assertEqual(jobs[0]['start_frame'], 1080000)
+        self.assertEqual(jobs[1]['end_frame'], 1087199)
+
 
 if __name__ == '__main__':
     unittest.main()
