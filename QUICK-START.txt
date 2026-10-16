@@ -1,0 +1,19 @@
+Audio Sections — quick start
+
+INSTALL ONCE
+Unzip the whole package. Open Install Audio Sections.exe.
+Click Install in DaVinci Resolve.
+
+EACH RECORDING
+1. Open your Resolve project.
+2. Select the original recording in the Media Pool.
+3. Workspace → Scripts → Audio Sections - Sort and Render.
+
+Leave Resolve open. Sorting, queue creation and rendering happen automatically.
+Finished videos appear in Audio Sections Exports beside the original recording.
+
+1T = 30-second teaser with fade-out. 1 = full audio section.
+Further pairs use 2T/2, 3T/3, etc. Existing exports are preserved.
+
+No internet, account, Python setup or Console commands are needed.
+If the menu command is missing, restart Resolve once after installation.

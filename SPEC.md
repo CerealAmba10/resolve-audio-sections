@@ -1,62 +1,37 @@
-# Audio Sections for Resolve
+# Audio Sections for Resolve: current specification
 
-## Objective and success criteria
-An offline Windows companion for DaVinci Resolve 21.1.1 Free. Scan a local
-video's audio without decoding its video, find sections between qualifying
-silences, and create isolated timelines and Deliver jobs in this order:
-`originalfilename 1T`, `originalfilename 1`, `originalfilename 2T`, etc.
-Only sections strictly longer than 30 seconds qualify. Teasers contain the
-first 30 seconds, with an optional native audio/video fade over the last second.
-Full clips have no added fades. Nothing starts rendering automatically.
+Offline Windows integration for Resolve Free 21.1.1. A one-time installer adds
+Workspace → Scripts → Audio Sections - Sort and Render and a quiet local helper
+that starts with Windows. Daily operation needs no companion controls or Console.
 
-Defaults: silence below -40 dBFS lasting at least 1 second, all audio streams
-(a gap must be silent in every selected stream), numbering from 1, one-second
-teaser fade. All are adjustable except the requested 30-second teaser length.
-Boundaries exclude the qualifying silence; shorter pauses remain inside clips.
-The beginning/end of the file are boundaries when there is no surrounding gap.
+Select one original Media Pool recording, or use the video under the current
+timeline playhead. Scan the complete source, splitting at silence below -40 dBFS
+lasting at least 1 second in every embedded audio stream. Keep only sections
+strictly longer than 30 seconds. Stream audio with FFmpeg; do not upload anything.
 
-Use a saved Deliver preset named `Audio Sections High` for screenshot settings:
-MP4, H.264, Native, no network optimization, timeline resolution and frame rate,
-Auto profile, automatic keyframes, frame reordering on, Balanced preset,
-Quality rate control, High quality. Enable audio (AAC recommended). The script
-preserves High through the verified bundled preset and forces export audio/video on. Unexposed
-encoder options come from this preset rather than guessed API keys.
+For each section create isolated teaser/full timelines in the Audio Sections bin
+and Deliver jobs in that order. Teaser: first 30 seconds rounded to whole frames,
+last second fades both audio and video. Full: gap-to-gap, no added fades. Names:
+originalfilename NT and originalfilename N. Automatically select the next unused
+number from existing timelines and exports. Preserve original edits and jobs.
 
-## Design and implementation order
-1. Python standard-library scanner with FFmpeg/FFprobe. Streaming detection,
-   bounded log memory, cancellation, rational frame math, no media uploads.
-2. Generate a standalone Lua 5.1 queue script and reviewable JSON/CSV manifest.
-   Invoke from Resolve's internal Lua Console for Free edition compatibility.
-3. Desktop Tk interface, portable Windows executable and bundled FFmpeg tools.
+Load the bundled Audio Sections High preset (MP4, H.264, Native, Balanced,
+Quality/High, Auto profile, automatic keyframes, frame reorder on, no network
+optimization or marker chapters; AAC 48kHz 320kbps). Use reference timeline size
+and frame rate, or project settings if no current timeline. Save the project and
+render only newly created jobs. Exports go into Audio Sections Exports beside the
+source. Retain the generated timelines and batch JSON/CSV/Lua for inspection.
 
-Follow-up: project-aware native OTIO handoff, automatic local analysis and batch
-publication, and short Console entry points AudioSectionsAnalyze()/AudioSectionsQueue().
-Free 21.1.1 ignores Scripts-menu execution and removes io/process launch functions;
-the scanner must remain running separately. Reuse imported source media and group
-generated timelines in an Audio Sections bin. Native append end frames are exclusive.
+Reject missing/offline media, obvious variable frame rates, differing stream start
+times and source FPS overrides. Refuse collisions; roll back only this batch's
+objects if queue creation fails. Source file and existing outputs are never edited.
+User timeline effects, titles, grades, cuts and mixer changes are not transferred.
 
-Create a new timeline for each output and retain it so later changes cannot
-alter an earlier job's fades. Preserve existing timelines and jobs. Check
-filename/timeline collisions before changes. Roll back only objects created
-by this script if queuing fails. On repeat, refuse duplicates. Source must be
-a local, constant-frame-rate video with audio; reject obvious variable rates
-or differing stream start times until normalized by the user.
+Architecture: worker_core.py/audio_sections.py scan; worker.py provides local
+mailbox/progress; native_bridge.lua controls Resolve through supported Lua APIs;
+queue_template.lua creates isolated jobs; setup_plugin.py installs; build_plugin.ps1
+packages. Free lacks io/process launch; use loadfile/dofile and Fusion prefs.
 
-## Commands and structure
-`python -m unittest discover -s tests -v`
-`python app.py` (desktop interface)
-`python -m PyInstaller --noconfirm --windowed --onedir --name AudioSections app.py`
-
-`audio_sections.py`: detection and export; `queue_template.lua`: Resolve adapter;
-`app.py`: desktop interface; `tests/`: unit, real-media and Lua adapter checks;
-`README.md`: setup and operation. Snake case functions, explicit validation,
-subprocess argument arrays (no shell). Example: `sections_from_silence(120, gaps)`.
-
-## Verification and boundaries
-Always test silence at start/end, fully silent/audio files, threshold length,
-short pauses, multiple tracks, frame rounding, naming and Lua escaping.
-Use real FFmpeg synthetic media and a Lua test double for render queue state.
-Live queue creation and fades verified in Resolve Free; no completed render verified.
-Never change user media, delete existing jobs, start renders or use networking
-at runtime. Ask before publishing or changing unrelated installed software.
-
+Verification: unit and real-media tests plus a native-menu completed render.
+Decoded teaser must fade relative to the matching first 30 seconds of the full
+clip. Rebuild the package after changes and install that exact build for smoke QA.

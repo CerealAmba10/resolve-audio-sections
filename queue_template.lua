@@ -26,7 +26,7 @@ local old_timeline = project:GetCurrentTimeline()
 local old_page = r:GetCurrentPage()
 local pool = project:GetMediaPool()
 local old_folder = pool:GetCurrentFolder()
-local base = old_timeline and old_timeline:GetSettings() or project:GetSettings()
+local base = AudioSectionsReferenceSettings or (old_timeline and old_timeline:GetSettings() or project:GetSettings())
 local fps = require_ok(frame_rate(base.timelineFrameRate), 'Cannot determine timeline frame rate.')
 local width = require_ok(tonumber(base.timelineResolutionWidth), 'Cannot determine timeline width.')
 local height = require_ok(tonumber(base.timelineResolutionHeight), 'Cannot determine timeline height.')
@@ -163,3 +163,4 @@ end
 restore()
 r:OpenPage('deliver')
 print('Audio Sections: ' .. #queued .. ' jobs queued. Review them, save the project, then click Render All.')
+return {jobIds=queued}
