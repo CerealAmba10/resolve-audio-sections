@@ -42,16 +42,21 @@ shortcut named **Audio Sections**.
    teaser ends. Grey blocks are too short.
 5. Click **Render N clips**. Leave Resolve open until the window says it is done.
 
+By default only **digital silence** is cut out: stretches where every audible track
+(Background included) is below -80 dBFS, i.e. no sound at all. Everything else is exported,
+however quiet, in clips of at most 3 minutes. Tick **Also split at pauses in Primary tracks**
+to also cut at speech pauses using the controls below.
+
 | Control | What it does |
 | --- | --- |
 | Silence below (per track) | Level counted as silence. **Auto** sets it from that track's own noise floor and speech level. You can also drag the orange line. |
 | Split at silence of at least | Shorter pauses stay inside a clip. Raise it for long recordings so normal pauses do not split a clip. |
 | Padding around speech | Extra room before the first word and after the last, never past the middle of a gap. |
 | Ignore sounds shorter than | Clicks and pops in a silence do not start a clip. |
-| Keep clips longer than | Shorter sections are shown but not rendered. |
+| Keep clips longer than | Shorter pieces are shown but not rendered (default 1 s). A clip shorter than the teaser length gets a teaser of the whole clip, so every N has an NT. |
 | Longest clip / cut at quietest point in last | A section longer than this (default 3:00) is cut at its quietest moment in the final window (default 2:30–3:00). The rest continues as the next clip, cut the same way. 0 turns it off. |
 | Also export quiet over | A quiet stretch between clips longer than this (default 45 s) is exported as its own clip (purple, with teaser and the 3-minute rule), so only shorter pauses are left out and the track is exported nearly intact. 0 drops all quiet. |
-| Hard-cut dead silence over | Any stretch where every audio track, Background included, is below -80 dBFS (no sound at all) for this long (default 0.5 s) is cut out of every clip, speech or quiet. The pieces either side become separate clips; pieces under 30 s (the teaser length) are dropped. 0 turns it off. |
+| Hard-cut dead silence over | Any stretch where every audio track, Background included, is below -80 dBFS (no sound at all) for this long (default 0.5 s) is cut out of every clip, speech or quiet. The pieces either side become separate clips. 0 turns it off. |
 | Teaser length / fade | Teaser duration and the fade-out at its end. |
 
 Mouse wheel zooms the preview; drag to scroll. Drag a green clip edge to trim it,

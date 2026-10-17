@@ -16,7 +16,7 @@ COLORS = dict(bg='#1c1d21', lane='#25272d', grid='#34363d', text='#c9ccd3', dim=
 SETTINGS = [('min_silence', 'Split at silence of at least (s)', 0.1, 0.1, 600),
             ('padding', 'Padding around speech (s)', 0.05, 0, 10),
             ('min_burst', 'Ignore sounds shorter than (s)', 0.05, 0, 5),
-            ('min_length', 'Keep clips longer than (s)', 1, 1, 36000),
+            ('min_clip', 'Keep clips longer than (s)', 1, 0, 36000),
             ('max_length', 'Longest clip (s, 0 = no limit)', 10, 0, 36000),
             ('min_quiet', 'Also export quiet over (s, 0 = never)', 5, 0, 36000),
             ('min_dead', 'Hard-cut dead silence over (s, 0 = off)', 0.25, 0, 60),
@@ -114,6 +114,9 @@ class Editor:
                                width=7, command=self.schedule)
             spin.grid(row=row, column=1, padx=(8, 0), pady=1)
             spin.bind('<KeyRelease>', lambda e: self.schedule())
+        self.pauses = tk.BooleanVar(value=self.settings.get('pauses', False))
+        ttk.Checkbutton(options, text='Also split at pauses in Primary tracks', variable=self.pauses,
+                        command=self.schedule).grid(row=len(SETTINGS), column=0, columnspan=2, sticky='w', pady=(4, 0))
 
         self.canvas = tk.Canvas(outer, background=COLORS['bg'], highlightthickness=0, height=
                                 RULER + CLIP_LANE + LANE * max(1, len(self.tracks)) + 8)
@@ -239,13 +242,18 @@ class Editor:
     def recompute(self):
         self.pending = None
         primary = [t for t in self.tracks if t['envelope'] is not None and t['role'].get() == 'Primary']
+        audible = [t['envelope'] for t in self.tracks if t['envelope'] is not None and t['enabled']]
+        dead = d.dead_spans(audible, self.setting('min_dead'))
+        min_length = self.setting('min_clip')
         runs = d.active_runs([t['envelope'] for t in primary], [self.threshold(t) for t in primary])
-        min_length = max(self.setting('min_length'), self.setting('teaser'))
-        self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
-                                        self.setting('min_burst'), min_length)
-        self.sections = d.add_quiet(self.sections, self.duration, self.setting('min_quiet'))
-        scanned = [t['envelope'] for t in self.tracks if t['envelope'] is not None]
-        self.sections = d.cut_dead(self.sections, d.dead_spans(scanned, self.setting('min_dead')), min_length)
+        if self.pauses.get():
+            self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
+                                            self.setting('min_burst'), min_length)
+            self.sections = d.add_quiet(self.sections, self.duration, self.setting('min_quiet'))
+            self.sections = d.cut_dead(self.sections, dead, min_length)
+        else:
+            # Default: only digital silence is cut; every other sound is exported.
+            self.sections, runs = d.sound_sections(dead, self.duration, min_length), ()
         self.sections = d.split_long(self.sections, self.setting('max_length'), self.setting('cut_window'),
                                      [t['envelope'] for t in primary], [self.threshold(t) for t in primary], min_length,
                                      runs, self.setting('padding'))
@@ -416,7 +424,7 @@ class Editor:
                 s['start'] = max(low, s['end'] - cap, min(s['end'] - 1, seconds))
             else:
                 s['end'] = min(high, s['start'] + cap, max(s['start'] + 1, seconds))
-            s['keep'] = s['end'] - s['start'] > max(self.setting('min_length'), self.setting('teaser'))
+            s['keep'] = s['end'] - s['start'] > self.setting('min_clip')
             s['use'] = s['use'] or s['keep']
             self.edited, self.selected = True, a
             self.refresh_table()
@@ -461,15 +469,13 @@ class Editor:
         jobs, number = [], self.first_number()
         for s in self.included():
             first, last = d.to_frames(s['start'], s['end'], self.fps)
-            if last - first + 1 < teaser_frames:
-                return messagebox.showerror('Clip too short', f"The clip at {clock(s['start'])} is shorter than the teaser.",
-                                            parent=self.win)
             name = f'{stem} {number}'
             for output in (name, name + 'T'):
                 if (folder / (output + '.mp4')).exists():
                     return messagebox.showerror('Already exists', f'{output}.mp4 already exists in that folder.', parent=self.win)
             jobs.append(dict(name=name, teaser=name + 'T', mark_in=self.timeline['start'] + first,
                              mark_out=self.timeline['start'] + last, frames=last - first + 1,
+                             teaser_frames=min(teaser_frames, last - first + 1),   # short clip: whole clip
                              start=s['start'], end=s['end']))
             number += 1
         if not jobs:
@@ -477,7 +483,7 @@ class Editor:
         folder.mkdir(parents=True, exist_ok=True)
         roles = dict(self.settings.get('roles', {}))
         roles.update({t['name'] or f"A{t['index']}": t['role'].get() for t in self.tracks})
-        self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles)
+        self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get())
         self.cancel.set()
         self.win.destroy()
         self.on_render(dict(output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,

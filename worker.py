@@ -102,7 +102,7 @@ def finish_teasers(batch, cancel, progress):
         if frames is not None and frames != job['frames']:
             warnings.append(f"{full.name}: {frames} frames rendered, {job['frames']} expected.")
         progress(n / len(batch['jobs']), f"Making teaser {job['teaser']}.mp4")
-        make_teaser(full, output / (job['teaser'] + '.mp4'), batch['teaser_frames'], fps, batch['fade'])
+        make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps, batch['fade'])
     return warnings
 
 

@@ -10,6 +10,11 @@ since GetSourceStartTime includes the file's start timecode, record position,
 GetSourceAudioChannelMapping routing; disabled items and muted mappings are silent) and
 measures RMS dBFS every 20 ms with FFmpeg across the routed channels together.
 
+Default mode: sections are everything between dead spans (every enabled track below -80 dBFS
+for at least min_dead), split by max_length at the quietest point, kept if longer than
+min_clip (1 s); a clip shorter than the teaser gets a whole-clip teaser. The optional
+pause mode adds the speech rules below.
+
 A window lets the user mark tracks Primary or Background and set each primary track's
 silence level (auto: max(95th-percentile level - 24 dB, 2nd-percentile level + 6 dB)).
 Speech = any primary track above its level. Drop bursts shorter than min_burst; merge runs

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2
+
+- Default: cut only at digital silence and export everything else, however quiet, in clips of
+  at most 3 minutes. Speech-pause cutting is now an optional checkbox.
+- Short clips are no longer dropped (minimum 1 s); their teaser is the whole clip.
+- The minimum-length setting is reset to 1 s, replacing the old saved 30 s value.
+
 ## 1.1
 
 - Export quiet stretches longer than 45 s as their own clips (with teasers), so only short
