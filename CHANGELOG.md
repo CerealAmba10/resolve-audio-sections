@@ -4,6 +4,7 @@
 
 - Export quiet stretches longer than 45 s as their own clips (with teasers), so only short
   pauses are cut and the track is exported nearly intact.
+- Hard-cut dead silence (every track below -80 dBFS for 0.5 s or more) out of every clip.
 - Log each run (render request, Resolve finished, teasers made, errors) to log.txt.
 
 ## 1.0: GitHub releases and updates

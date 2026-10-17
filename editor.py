@@ -19,6 +19,7 @@ SETTINGS = [('min_silence', 'Split at silence of at least (s)', 0.1, 0.1, 600),
             ('min_length', 'Keep clips longer than (s)', 1, 1, 36000),
             ('max_length', 'Longest clip (s, 0 = no limit)', 10, 0, 36000),
             ('min_quiet', 'Also export quiet over (s, 0 = never)', 5, 0, 36000),
+            ('min_dead', 'Hard-cut dead silence over (s, 0 = off)', 0.25, 0, 60),
             ('cut_window', 'Cut at quietest point in last (s)', 5, 1, 600),
             ('teaser', 'Teaser length (s)', 1, 1, 600),
             ('fade', 'Teaser fade-out (s)', 0.25, 0, 30)]
@@ -243,6 +244,8 @@ class Editor:
         self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
                                         self.setting('min_burst'), min_length)
         self.sections = d.add_quiet(self.sections, self.duration, self.setting('min_quiet'))
+        scanned = [t['envelope'] for t in self.tracks if t['envelope'] is not None]
+        self.sections = d.cut_dead(self.sections, d.dead_spans(scanned, self.setting('min_dead')), min_length)
         self.sections = d.split_long(self.sections, self.setting('max_length'), self.setting('cut_window'),
                                      [t['envelope'] for t in primary], [self.threshold(t) for t in primary], min_length,
                                      runs, self.setting('padding'))

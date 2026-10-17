@@ -51,6 +51,7 @@ shortcut named **Audio Sections**.
 | Keep clips longer than | Shorter sections are shown but not rendered. |
 | Longest clip / cut at quietest point in last | A section longer than this (default 3:00) is cut at its quietest moment in the final window (default 2:30–3:00). The rest continues as the next clip, cut the same way. 0 turns it off. |
 | Also export quiet over | A quiet stretch between clips longer than this (default 45 s) is exported as its own clip (purple, with teaser and the 3-minute rule), so only shorter pauses are left out and the track is exported nearly intact. 0 drops all quiet. |
+| Hard-cut dead silence over | Any stretch where every audio track, Background included, is below -80 dBFS (no sound at all) for this long (default 0.5 s) is cut out of every clip, speech or quiet. The pieces either side become separate clips; pieces under 30 s (the teaser length) are dropped. 0 turns it off. |
 | Teaser length / fade | Teaser duration and the fade-out at its end. |
 
 Mouse wheel zooms the preview; drag to scroll. Drag a green clip edge to trim it,

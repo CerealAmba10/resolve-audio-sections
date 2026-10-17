@@ -18,7 +18,9 @@ sections longer than max_length (default 180 s) at the quietest 0.5 s, relative 
 primary track's level, within the last cut_window (default 30 s) before max_length, repeating
 on the remainder; keep sections strictly longer than max(min_length, teaser). Before splitting, any span
 between kept sections longer than min_quiet (default 45 s, blips included) becomes a quiet
-section, split by length but never trimmed. The preview re-cuts instantly and
+section, split by length but never trimmed. Then dead spans (every scanned track below
+-80 dBFS for at least min_dead, default 0.5 s) are cut out of all sections, leaving the pieces
+either side as separate sections that must still exceed max(min_length, teaser). The preview re-cuts instantly and
 supports zoom, frame-snapped manual trims and per-clip skip.
 
 For each chosen section, queue one Resolve job on the source timeline with MarkIn/MarkOut

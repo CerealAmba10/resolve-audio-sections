@@ -7,7 +7,7 @@ from pathlib import Path
 HOP = 0.02          # envelope resolution: one RMS value per 20 ms
 FLOOR_DB = -120.0   # value used for digital silence and timeline gaps
 
-DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_length=30.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, teaser=30.0, fade=1.0)
+DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_length=30.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, min_dead=0.5, teaser=30.0, fade=1.0)
 
 _NTSC = {'23.976': Fraction(24000, 1001), '29.97': Fraction(30000, 1001), '47.952': Fraction(48000, 1001),
          '59.94': Fraction(60000, 1001), '119.88': Fraction(120000, 1001)}
@@ -131,6 +131,48 @@ def add_quiet(sections, duration, min_quiet):
     return sorted([s for s in sections if not covered(s)] + quiet, key=lambda s: s['start'])
 
 
+DEAD_DB = -80.0     # below this on every track is treated as no sound at all
+
+
+def dead_spans(envelopes, min_dead, hop=HOP):
+    """Stretches of at least min_dead seconds where every track (background included) is
+    below DEAD_DB: digital silence, which is cut out of every clip regardless of settings."""
+    if min_dead <= 0 or not envelopes:
+        return []
+    spans, start = [], None
+    length = max(len(e) for e in envelopes)
+    for i in range(length + 1):
+        dead = i < length and all(i >= len(e) or e[i] <= DEAD_DB for e in envelopes)
+        if dead and start is None:
+            start = i
+        elif not dead and start is not None:
+            if (i - start) * hop >= min_dead:
+                spans.append((start * hop, i * hop))
+            start = None
+    return spans
+
+
+def cut_dead(sections, dead, min_length):
+    """Remove dead spans from sections; the pieces either side become separate clips."""
+    result = []
+    for section in sections:
+        pieces = [(section['start'], section['end'])]
+        for a, b in dead:
+            remaining = []
+            for start, end in pieces:
+                if b <= start or end <= a:
+                    remaining.append((start, end))
+                    continue
+                if start < a:
+                    remaining.append((start, a))
+                if b < end:
+                    remaining.append((b, end))
+            pieces = remaining
+        for start, end in pieces:
+            result.append(dict(section, start=start, end=end, keep=end - start > min_length))
+    return result
+
+
 def split_long(sections, max_length, window, envelopes, thresholds, min_length, runs=(), padding=0.0):
     """Cut sections longer than max_length at their quietest point in the last `window`
     seconds before max_length; the rest continues as the next clip, split the same way.
@@ -211,5 +253,12 @@ if __name__ == '__main__':
     assert [(x['start'], x['end'], bool(x.get('quiet'))) for x in q] ==         [(0, 100, False), (100, 300, True), (300, 400, False), (420, 470, False)], q
     q = split_long(q, 180, 30, [[-80.0] * 23500], [-40], 30, runs=[(201, 204)], padding=0.25)
     assert q[1]['end'] == q[2]['start'] and q[2]['quiet'], q          # quiet clip split without trimming
+    # Dead air (every track below -80 dB) is cut out hard, even inside a quiet clip.
+    loud, silent = [-50.0] * 2000, [-120.0] * 2000
+    dead = dead_spans([loud[:1000] + silent[:500] + loud[:500], [-120.0] * 2000], 0.5)
+    assert dead == [(20.0, 30.0)], dead
+    assert dead_spans([loud[:1000] + silent[:500] + loud[:500], loud], 0.5) == []   # background still sounding
+    pieces = cut_dead([dict(start=0, end=40, keep=True, quiet=True)], dead, 5)
+    assert [(p['start'], p['end'], p['quiet']) for p in pieces] == [(0, 20.0, True), (30.0, 40, True)], pieces
     assert next_number('duck test', ['duck test 1T', 'duck test 3', 'other 9']) == 4
     print('detection ok')
