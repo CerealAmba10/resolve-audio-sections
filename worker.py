@@ -80,6 +80,15 @@ def write_state(home, request_id, status, **fields):
     atomic_text(Path(home) / 'state.lua', 'return ' + lua_value(dict(id=request_id, status=status, **fields)) + '\n')
 
 
+def log(home, message):
+    # Plain run log in the install folder, for checking what happened after a render.
+    try:
+        with open(Path(home) / 'log.txt', 'a', encoding='utf-8') as handle:
+            handle.write(datetime.now().strftime('%Y-%m-%d %H:%M:%S  ') + message + '\n')
+    except OSError:
+        pass
+
+
 def finish_teasers(batch, cancel, progress):
     """Cut each teaser from its rendered full clip and check the full clip's length."""
     fps, output, warnings = Fraction(batch['fps']), Path(batch['output']), []
@@ -213,9 +222,11 @@ class Worker:
         jobs = [dict(name=j['name'], mark_in=j['mark_in'], mark_out=j['mark_out']) for j in batch['jobs']]
         write_state(self.home, self.request['id'], 'ready', preset=PRESET, output=Path(batch['output']).as_posix(), jobs=jobs)
         self.last_update = time.time()
+        log(self.home, f"render requested: {', '.join(j['name'] for j in jobs)} -> {batch['output']}")
         self.show('Rendering your clips', f'Queuing {len(jobs)} clips in Resolve…')
 
     def teasers(self):
+        log(self.home, 'Resolve finished rendering; making teasers')
         self.stage = 'teasers'
         self.show('Making teasers', 'Cutting teasers from the rendered clips…', 0)
         def work():
@@ -247,15 +258,19 @@ class Worker:
                 self.message.set('Installing the update. Audio Sections restarts by itself.')
             elif kind == 'finished':
                 count = len(self.batch['jobs'])
+                log(self.home, f"done: {count} clips, teasers {', '.join(j['teaser'] for j in self.batch['jobs'])}"
+                    + (f" (warnings: {' '.join(value)})" if value else ''))
                 note = '\n\nCheck: ' + ' '.join(value) if value else ''
                 self.done('All done' if not self.cancel.is_set() else 'Stopped',
                           f'{count} clips and {count} teasers saved.{note}', self.batch['output'])
             else:
+                log(self.home, f'error: {value}')
                 self.done('Could not finish', value)
         result = read_pref(self.prefs, 'AudioSectionsResultV1')
         if result and result.get('id') != self.result_seen and result.get('status') in ('error', 'complete'):
             self.result_seen = result.get('id')
             if result['status'] == 'error' and self.stage != 'teasers':
+                log(self.home, f"Resolve error: {result.get('message', '')}")
                 self.done('Could not finish', result.get('message', ''))
             elif result['status'] == 'complete' and self.stage == 'rendering' and result['id'] == self.seen:
                 self.teasers()
@@ -263,6 +278,7 @@ class Worker:
             self.message.set(result.get('message', ''))
             self.progress['value'] = result.get('progress', 0)
         if self.stage == 'rendering' and time.time() - max(self.last_update, resolve_heartbeat(self.prefs)) > 90:
+            log(self.home, 'gave up: no word from Resolve for 90 s')
             self.done('Could not finish', 'Resolve stopped responding. Check its render queue, then run Audio Sections again.')
         request = read_pref(self.prefs, 'AudioSectionsRequestV2')
         if self.stage == 'idle' and request and request.get('id') != self.seen:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1
+
+- Export quiet stretches longer than 45 s as their own clips (with teasers), so only short
+  pauses are cut and the track is exported nearly intact.
+- Log each run (render request, Resolve finished, teasers made, errors) to log.txt.
+
 ## 1.0: GitHub releases and updates
 
 - Publish builds as GitHub releases (release.ps1). The helper checks for newer releases and

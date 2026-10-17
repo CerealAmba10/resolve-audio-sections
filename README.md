@@ -50,6 +50,7 @@ shortcut named **Audio Sections**.
 | Ignore sounds shorter than | Clicks and pops in a silence do not start a clip. |
 | Keep clips longer than | Shorter sections are shown but not rendered. |
 | Longest clip / cut at quietest point in last | A section longer than this (default 3:00) is cut at its quietest moment in the final window (default 2:30–3:00). The rest continues as the next clip, cut the same way. 0 turns it off. |
+| Also export quiet over | A quiet stretch between clips longer than this (default 45 s) is exported as its own clip (purple, with teaser and the 3-minute rule), so only shorter pauses are left out and the track is exported nearly intact. 0 drops all quiet. |
 | Teaser length / fade | Teaser duration and the fade-out at its end. |
 
 Mouse wheel zooms the preview; drag to scroll. Drag a green clip edge to trim it,
@@ -65,6 +66,11 @@ to black and silence.
 | --- | --- |
 | Complete section | `name 1.mp4` |
 | First 30 seconds, faded | `name 1T.mp4` |
+
+Every clip, speech or quiet, gets a teaser with the same number: `name 3.mp4` and
+`name 3T.mp4`. Resolve renders the full clips; the helper cuts the teasers from them a few
+seconds after Resolve finishes, so teasers appear in the export folder but not in
+Resolve's render queue. Each step is written to Documents → Audio Sections Plugin → log.txt.
 
 Numbering continues after the highest number already in the export folder or render
 queue. Existing files are never overwritten. The default name and folder come from the

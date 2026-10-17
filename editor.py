@@ -12,12 +12,13 @@ ROLES = ('Primary', 'Background')
 RULER, CLIP_LANE, LANE = 22, 30, 58
 DB_MIN = -80.0
 COLORS = dict(bg='#1c1d21', lane='#25272d', grid='#34363d', text='#c9ccd3', dim='#7c808a', primary='#4fb3ff',
-              background='#5d616b', threshold='#ffb547', keep='#3ddc97', short='#6b6f78', off='#a8443f', select='#ffffff')
+              background='#5d616b', threshold='#ffb547', keep='#3ddc97', quiet='#a78bfa', short='#6b6f78', off='#a8443f', select='#ffffff')
 SETTINGS = [('min_silence', 'Split at silence of at least (s)', 0.1, 0.1, 600),
             ('padding', 'Padding around speech (s)', 0.05, 0, 10),
             ('min_burst', 'Ignore sounds shorter than (s)', 0.05, 0, 5),
             ('min_length', 'Keep clips longer than (s)', 1, 1, 36000),
             ('max_length', 'Longest clip (s, 0 = no limit)', 10, 0, 36000),
+            ('min_quiet', 'Also export quiet over (s, 0 = never)', 5, 0, 36000),
             ('cut_window', 'Cut at quietest point in last (s)', 5, 1, 600),
             ('teaser', 'Teaser length (s)', 1, 1, 600),
             ('fade', 'Teaser fade-out (s)', 0.25, 0, 30)]
@@ -241,6 +242,7 @@ class Editor:
         min_length = max(self.setting('min_length'), self.setting('teaser'))
         self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
                                         self.setting('min_burst'), min_length)
+        self.sections = d.add_quiet(self.sections, self.duration, self.setting('min_quiet'))
         self.sections = d.split_long(self.sections, self.setting('max_length'), self.setting('cut_window'),
                                      [t['envelope'] for t in primary], [self.threshold(t) for t in primary], min_length,
                                      runs, self.setting('padding'))
@@ -267,7 +269,7 @@ class Editor:
             name = ''
             if section['use'] and section['keep']:
                 name, number = f'{self.stem.get().strip()} {number}  (+ {number}T)', number + 1
-            use = '✔' if section['use'] and section['keep'] else ('too short' if not section['keep'] else '—')
+            use = ('✔ quiet' if section.get('quiet') else '✔') if section['use'] and section['keep'] else                 ('too short' if not section['keep'] else '—')
             self.table.insert('', 'end', iid=str(i), values=(use, name, clock(section['start']),
                                                               clock(section['end']), f'{length:.2f} s'),
                               tags=() if section['keep'] else ('short',))
@@ -335,7 +337,7 @@ class Editor:
             if s['end'] < self.view[0] or s['start'] > self.view[1]:
                 continue
             x0, x1 = self.x(s['start']), self.x(s['end'])
-            color = COLORS['keep'] if s['keep'] and s['use'] else COLORS['off'] if s['keep'] else COLORS['short']
+            color = COLORS['quiet' if s.get('quiet') else 'keep'] if s['keep'] and s['use'] else COLORS['off'] if s['keep'] else COLORS['short']
             c.create_rectangle(x0, RULER + 3, x1, RULER + CLIP_LANE - 3, fill=color, outline=COLORS['select']
                                if i == self.selected else '', width=2, stipple='' if s['keep'] else 'gray50')
             if s['keep'] and s['use']:

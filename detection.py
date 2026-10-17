@@ -7,7 +7,7 @@ from pathlib import Path
 HOP = 0.02          # envelope resolution: one RMS value per 20 ms
 FLOOR_DB = -120.0   # value used for digital silence and timeline gaps
 
-DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_length=30.0, max_length=180.0, cut_window=30.0, teaser=30.0, fade=1.0)
+DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_length=30.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, teaser=30.0, fade=1.0)
 
 _NTSC = {'23.976': Fraction(24000, 1001), '29.97': Fraction(30000, 1001), '47.952': Fraction(48000, 1001),
          '59.94': Fraction(60000, 1001), '119.88': Fraction(120000, 1001)}
@@ -119,6 +119,18 @@ def quietest(envelopes, thresholds, start, end, hop=HOP, smooth=0.5):
     return (first + best_at + width / 2) * hop
 
 
+def add_quiet(sections, duration, min_quiet):
+    """Also export long quiet stretches: anything between kept clips (blips included) longer than
+    min_quiet becomes its own clip, so only shorter pauses are left out of the export."""
+    if min_quiet <= 0:
+        return sections
+    kept = [s for s in sections if s['keep']]
+    edges = [0.0] + [x for s in kept for x in (s['start'], s['end'])] + [duration]
+    quiet = [dict(start=a, end=b, keep=True, quiet=True) for a, b in zip(edges[::2], edges[1::2]) if b - a > min_quiet]
+    covered = lambda s: any(q['start'] <= s['start'] and s['end'] <= q['end'] for q in quiet)
+    return sorted([s for s in sections if not covered(s)] + quiet, key=lambda s: s['start'])
+
+
 def split_long(sections, max_length, window, envelopes, thresholds, min_length, runs=(), padding=0.0):
     """Cut sections longer than max_length at their quietest point in the last `window`
     seconds before max_length; the rest continues as the next clip, split the same way.
@@ -131,15 +143,16 @@ def split_long(sections, max_length, window, envelopes, thresholds, min_length, 
     result = []
     for section in sections:
         start, end = section['start'], section['end']
+        trim = () if section.get('quiet') else runs      # quiet clips stay intact end to end
         while end - start > max_length:
             cut = quietest(envelopes, thresholds, start + max(1.0, max_length - window), start + max_length)
-            before = max((e for s, e in runs if start < e <= cut), default=cut)
-            after = min((s for s, e in runs if cut <= s < end), default=cut)
-            if any(s < cut < e for s, e in runs):
+            before = max((e for s, e in trim if start < e <= cut), default=cut)
+            after = min((s for s, e in trim if cut <= s < end), default=cut)
+            if any(s < cut < e for s, e in trim):
                 before = after = cut
-            result.append(dict(start=start, end=min(cut, before + padding), keep=cut - start > min_length))
+            result.append(dict(section, start=start, end=min(cut, before + padding), keep=cut - start > min_length))
             start = max(cut, after - padding)
-        result.append(dict(start=start, end=end, keep=end - start > min_length))
+        result.append(dict(section, start=start, end=end, keep=end - start > min_length))
     return result
 
 
@@ -190,5 +203,13 @@ if __name__ == '__main__':
     s = split_long([dict(start=0, end=400, keep=True)], 180, 30, [env], [-40], 30,
                    runs=[(0, 160.0), (161.0, 400)], padding=0.25)
     assert (s[0]['end'], s[1]['start']) == (160.25, 160.75), s
+    # Speech 0-100 and 300-400 with a 5 s blip at 200: the 200 s between becomes one quiet clip
+    # (blip included); the 20 s gap after 400 stays cut out.
+    sections = [dict(start=0, end=100, keep=True), dict(start=200, end=205, keep=False),
+                dict(start=300, end=400, keep=True), dict(start=420, end=470, keep=True)]
+    q = add_quiet(sections, 470, 45)
+    assert [(x['start'], x['end'], bool(x.get('quiet'))) for x in q] ==         [(0, 100, False), (100, 300, True), (300, 400, False), (420, 470, False)], q
+    q = split_long(q, 180, 30, [[-80.0] * 23500], [-40], 30, runs=[(201, 204)], padding=0.25)
+    assert q[1]['end'] == q[2]['start'] and q[2]['quiet'], q          # quiet clip split without trimming
     assert next_number('duck test', ['duck test 1T', 'duck test 3', 'other 9']) == 4
     print('detection ok')

@@ -16,7 +16,9 @@ Speech = any primary track above its level. Drop bursts shorter than min_burst; 
 separated by less than min_silence; pad edges by padding, capped at the gap midpoint; split
 sections longer than max_length (default 180 s) at the quietest 0.5 s, relative to each
 primary track's level, within the last cut_window (default 30 s) before max_length, repeating
-on the remainder; keep sections strictly longer than max(min_length, teaser). The preview re-cuts instantly and
+on the remainder; keep sections strictly longer than max(min_length, teaser). Before splitting, any span
+between kept sections longer than min_quiet (default 45 s, blips included) becomes a quiet
+section, split by length but never trimmed. The preview re-cuts instantly and
 supports zoom, frame-snapped manual trims and per-clip skip.
 
 For each chosen section, queue one Resolve job on the source timeline with MarkIn/MarkOut
