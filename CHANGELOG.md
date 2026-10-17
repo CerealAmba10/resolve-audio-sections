@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4
+
+- The Audio Sections window stays open after Make cuts in Resolve. Load edits from Resolve reads
+  your bladed, merged or deleted pieces into the list, and Render renders them from the cuts
+  timeline. The stuck "Render your cuts" popup (its button was cut off) is gone.
+- Each clip's video and audio pieces on the cuts timeline are linked.
+- New setting: fade out the end of each full clip.
+- Fix: a render after Make cuts in the same session is no longer missed by the helper.
+
 ## 1.3
 
 - Noise-gated recordings no longer shatter into fragments: only dead silence over 3 s ends a

@@ -42,13 +42,16 @@ shortcut named **Audio Sections**.
    teaser ends. Grey blocks are too short.
 5. Click **Render N clips**. Leave Resolve open until the window says it is done.
 
-**Check the cuts in Resolve first (optional).** Click **Make cuts in Resolve** instead of
-Render. A new timeline, "<name> (cuts)", is built with every clip as separate pieces on every
-track at its original position, colored alternately. Watch it and edit it: blade to cut a
-clip further, delete a through edit to merge two pieces, delete a piece to skip it. Then,
-with that timeline open, choose **Workspace → Scripts → Audio Sections** again: each piece
-on the top track renders as one clip plus its teaser. The cuts timeline holds plain media,
-so effects and transforms from the original timeline are not copied onto it.
+**Check the cuts in Resolve first (optional).** Click **Make cuts in Resolve**. A new
+timeline, "<name> (cuts)", is built with every clip as separate pieces at its original position,
+colored alternately, each clip's video and audio linked so they blade and move together. The
+Audio Sections window stays open. Edit the cuts timeline in Resolve: blade to cut a clip further,
+delete a through edit to merge two pieces, delete a piece to skip it. Then click **Load edits
+from Resolve**: the preview and list show exactly your pieces, and **Render** renders them from
+the cuts timeline. Changing a setting goes back to automatic cuts (Load edits brings yours back);
+**Make cuts in Resolve** again builds a fresh cuts timeline. Running Audio Sections later on a
+cuts timeline opens the window with its pieces loaded. The cuts timeline holds plain media, so
+effects and transforms from the original timeline are not copied onto it.
 
 By default a clip only ends at **long digital silence**: more than 3 seconds where every
 audible track (Background included) is below -80 dBFS, i.e. no sound at all. Shorter dead
@@ -69,6 +72,7 @@ to also cut at speech pauses using the controls below.
 | Longest clip / cut at quietest point in last | A section longer than this (default 3:00) is cut at its quietest moment in the final window (default 2:30–3:00). The rest continues as the next clip, cut the same way. 0 turns it off. |
 | Also export quiet over | A quiet stretch between clips longer than this (default 45 s) is exported as its own clip (purple, with teaser and the 3-minute rule), so only shorter pauses are left out and the track is exported nearly intact. 0 drops all quiet. |
 | Cut out dead silence over | Dead silence (every audible track below -80 dBFS) longer than this (default 3 s) is cut out and ends a clip. Shorter dead pauses stay inside clips. 0 turns it off. |
+| Fade out end of each clip | Fades the last seconds of every full clip to black and silence (default 0 = off). Applied after Resolve renders; teasers are cut before it. |
 | Teaser length / fade | Teaser duration and the fade-out at its end. |
 
 Mouse wheel zooms the preview; drag to scroll. Drag a green clip edge to trim it,

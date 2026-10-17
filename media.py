@@ -157,3 +157,20 @@ def make_teaser(full, teaser, frames, fps, fade):
     result = run(args, timeout=3600)
     if result.returncode:
         raise ValueError(f'Could not make {Path(teaser).name}:\n{result.stderr[-800:]}')
+
+
+def fade_out(path, frames, fps, fade):
+    """Fade a rendered clip's last `fade` seconds of picture and sound to black and silence, in place."""
+    path = Path(path)
+    seconds = float(frames / fps)
+    start = max(0.0, seconds - fade)
+    temporary = path.with_name(path.stem + '.fading.mp4')
+    args = [tool('ffmpeg'), '-hide_banner', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe', '-y',
+            '-i', str(path), '-vf', f'fade=t=out:st={start:.6f}:d={fade:.6f}', '-af', f'afade=t=out:st={start:.6f}:d={fade:.6f}',
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', str(temporary)]
+    result = run(args, timeout=3600)
+    if result.returncode:
+        temporary.unlink(missing_ok=True)
+        raise ValueError(f'Could not fade out {path.name}:\n{result.stderr[-800:]}')
+    temporary.replace(path)    # only replace the render once the faded copy is complete

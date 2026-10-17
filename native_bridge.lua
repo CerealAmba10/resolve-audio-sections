@@ -42,9 +42,10 @@ local function base64(data)
     return table.concat(output)
 end
 
-local function announce(id, status, progress, message, timeline)
-    f:SetPrefs('Global.AudioSectionsResultV1', base64(json({id = id, status = status,
-        progress = progress or 0, message = message or '', timeline = timeline})))
+local function announce(id, status, progress, message, extra)
+    local result = {id = id, status = status, progress = progress or 0, message = message or ''}
+    for k, v in pairs(extra or {}) do result[k] = v end
+    f:SetPrefs('Global.AudioSectionsResultV1', base64(json(result)))
     f:SavePrefs()
 end
 
@@ -141,6 +142,7 @@ local function build_cuts(p, source, clips)
         local colors, placed = {'Orange', 'Teal'}, 0
         for number, clip in ipairs(clips) do
             local first, stop = source:GetStartFrame() + clip.first, source:GetStartFrame() + clip.last + 1
+            local group = {}
             for _, kind in ipairs({'video', 'audio'}) do
                 for index = 1, source:GetTrackCount(kind) do
                     for _, item in ipairs(source:GetItemListInTrack(kind, index) or {}) do
@@ -156,11 +158,14 @@ local function build_cuts(p, source, clips)
                             call(piece, 'SetClipColor', colors[number % 2 + 1])
                             local mapping = kind == 'audio' and call(item, 'GetSourceAudioChannelMapping')
                             if mapping then call(piece, 'SetSourceAudioChannelMapping', mapping) end
+                            group[#group + 1] = piece
                             placed = placed + 1
                         end
                     end
                 end
             end
+            -- One clip's video and audio pieces move, blade and delete together.
+            if #group > 1 then call(cuts, 'SetClipsLinked', group, true) end
         end
         assert(placed > 0, 'No clips were placed on the cuts timeline.')
     end)
@@ -204,29 +209,74 @@ local function run()
         timeline = describe(timeline), queued = queued})))
     f:SavePrefs()
 
-    -- Wait while the helper scans and the user picks tracks and clips.
-    local state
+    -- Command loop while the Audio Sections window is open. Each helper command carries a higher seq:
+    -- 'cuts' builds a review timeline, 'pieces' reads back its edited pieces, 'render' queues and
+    -- renders (on the scanned timeline, or on a cuts timeline whose pieces were read), then ends.
+    local state, seq, prints = nil, 0, {}
+    local function find(name)
+        for i = 1, p:GetTimelineCount() do
+            local t = p:GetTimelineByIndex(i)
+            if t:GetName() == name then return t end
+        end
+    end
     local deadline = os.time() + 4 * 3600
-    while os.time() < deadline do
+    while true do
+        assert(os.time() < deadline, 'Audio Sections timed out waiting for a choice.')
         f:SetPrefs('Global.AudioSectionsHeartbeatV1', os.time())
         assert(helper_alive(), 'The Audio Sections helper stopped. Run the installer again, then retry.')
         state = load_state(id)
         if state and state.status == 'error' then error(state.message, 0) end
         if state and state.status == 'cancelled' then return end
-        if state and state.status == 'ready' then break end
+        if state and state.status == 'ready' and (state.seq or 1) > seq then
+            seq = state.seq or 1
+            local current = resolve:GetProjectManager():GetCurrentProject()
+            assert(current and current:GetName() == p:GetName(), 'The open project changed. Return to it and try again.')
+            if state.action == 'render' or not state.action then break end
+            local done, result = pcall(function()
+                if state.action == 'cuts' then
+                    assert(fingerprint(timeline) == before, 'The timeline was edited after scanning. Run Audio Sections again.')
+                    local name = build_cuts(p, timeline, state.clips)
+                    return {status = 'cuts_ready', timeline = name, start = find(name):GetStartFrame(),
+                        message = 'Made "' .. name .. '".'}
+                end
+                local cuts = assert(find(state.timeline), 'Timeline "' .. tostring(state.timeline) .. '" was not found.')
+                local track
+                for _, kind in ipairs({'video', 'audio'}) do
+                    for index = 1, cuts:GetTrackCount(kind) do
+                        local items = cuts:GetItemListInTrack(kind, index) or {}
+                        if not track and #items > 0 then track = items end
+                    end
+                end
+                local pieces = {}
+                for _, item in ipairs(track or {}) do
+                    if call(item, 'GetClipEnabled') ~= false then
+                        pieces[#pieces + 1] = {start = item:GetStart(), ['end'] = item:GetEnd()}
+                    end
+                end
+                prints[state.timeline] = fingerprint(cuts)
+                return {status = 'pieces', timeline = state.timeline, start = cuts:GetStartFrame(), pieces = pieces,
+                    message = #pieces .. ' pieces on "' .. state.timeline .. '".'}
+            end)
+            if done then
+                result.seq = seq
+                announce(id, result.status, 100, result.message, result)
+            else
+                announce(id, 'command_error', 0, tostring(result), {seq = seq})
+            end
+        end
         bmd.wait(0.25)
     end
-    assert(state and state.status == 'ready', 'Audio Sections timed out waiting for a choice.')
-    local current = resolve:GetProjectManager():GetCurrentProject()
-    assert(current and current:GetName() == p:GetName(), 'The open project changed. Return to it and try again.')
-    assert(p:SetCurrentTimeline(timeline), 'Could not reopen timeline ' .. timeline:GetName())
-    assert(fingerprint(timeline) == before, 'The timeline was edited after scanning. Run Audio Sections again.')
-    assert(not p:IsRenderingInProgress(), 'Another render started. Try again when it finishes.')
-    if state.action == 'cuts' then
-        local name = build_cuts(p, timeline, state.clips)
-        announce(id, 'cuts_ready', 100, 'Review "' .. name .. '", then run Audio Sections again on it.', name)
-        return
+    local target = state.timeline and assert(find(state.timeline), 'Timeline "' .. state.timeline .. '" was not found.') or timeline
+    local name = target:GetName()
+    if prints[name] then
+        assert(fingerprint(target) == prints[name], '"' .. name .. '" changed after its edits were loaded. Click Load edits again.')
+    else
+        assert(target == timeline, 'Click Load edits before rendering "' .. name .. '".')
+        assert(fingerprint(timeline) == before, 'The timeline was edited after scanning. Run Audio Sections again.')
     end
+    timeline = target
+    assert(p:SetCurrentTimeline(timeline), 'Could not reopen timeline ' .. timeline:GetName())
+    assert(not p:IsRenderingInProgress(), 'Another render started. Try again when it finishes.')
 
     if not p:LoadRenderPreset(state.preset) then
         assert(resolve:ImportRenderPreset(HOME .. '/' .. state.preset .. '.xml')

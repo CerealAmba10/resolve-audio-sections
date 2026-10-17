@@ -7,7 +7,7 @@ from pathlib import Path
 HOP = 0.02          # envelope resolution: one RMS value per 20 ms
 FLOOR_DB = -120.0   # value used for digital silence and timeline gaps
 
-DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_clip=1.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, min_dead=3.0, teaser=30.0, fade=1.0)
+DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_clip=1.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, min_dead=3.0, teaser=30.0, fade=1.0, clip_fade=0.0)
 
 _NTSC = {'23.976': Fraction(24000, 1001), '29.97': Fraction(30000, 1001), '47.952': Fraction(48000, 1001),
          '59.94': Fraction(60000, 1001), '119.88': Fraction(120000, 1001)}

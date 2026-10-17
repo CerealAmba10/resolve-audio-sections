@@ -16,9 +16,9 @@ from pathlib import Path
 from tkinter import ttk
 
 import detection as d
-from editor import Editor, clock
+from editor import Editor
 import updater
-from media import frame_count, make_teaser, resource_path
+from media import fade_out, frame_count, make_teaser, resource_path
 
 PRESET = 'Audio Sections High'
 SETTINGS_SCHEMA = 2      # bump when cutting defaults change, so saved old values are reset
@@ -91,6 +91,19 @@ def log(home, message):
         pass
 
 
+def result_key(result):
+    """Identity of one message from Resolve: commands in one session share an id, so status and seq count too."""
+    return result and (result.get('id'), result.get('status'), result.get('seq'), result.get('progress'))
+
+
+def pieces_of(timeline):
+    """(start, end) seconds of the enabled items on a timeline's first non-empty track, video first."""
+    fps = d.parse_fps(timeline['fps'])
+    track = next((t for k in ('video', 'audio') for t in timeline[k] if t['items']), None)
+    return [(float((i['start'] - timeline['start']) / fps), float((i['end'] - timeline['start']) / fps))
+            for i in sorted(track['items'] if track else [], key=lambda i: i['start']) if i.get('enabled', True)]
+
+
 def finish_teasers(batch, cancel, progress):
     """Cut each teaser from its rendered full clip and check the full clip's length."""
     fps, output, warnings = Fraction(batch['fps']), Path(batch['output']), []
@@ -105,6 +118,9 @@ def finish_teasers(batch, cancel, progress):
             warnings.append(f"{full.name}: {frames} frames rendered, {job['frames']} expected.")
         progress(n / len(batch['jobs']), f"Making teaser {job['teaser']}.mp4")
         make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps, batch['fade'])
+        if batch.get('clip_fade', 0) > 0:     # after the teaser, so the teaser is cut from the unfaded clip
+            progress((n + 0.5) / len(batch['jobs']), f"Fading out {full.name}")
+            fade_out(full, frames or job['frames'], fps, batch['clip_fade'])
     return warnings
 
 
@@ -125,8 +141,9 @@ class Worker:
             self.settings = dict(roles=self.settings.get('roles', {}), schema=SETTINGS_SCHEMA)
         self.prefs = Path(os.environ['APPDATA']) / 'Blackmagic Design/DaVinci Resolve/Support/Fusion/Profiles/Default/Fusion.prefs'
         self.seen = (read_pref(self.prefs, 'AudioSectionsRequestV2') or {}).get('id')
-        self.result_seen = (read_pref(self.prefs, 'AudioSectionsResultV1') or {}).get('id')
-        self.request = self.batch = None
+        self.result_seen = result_key(read_pref(self.prefs, 'AudioSectionsResultV1'))
+        self.request = self.batch = self.editor = self.record = None
+        self.seq, self.waiting = 0, None
         self.stage = 'idle'     # idle → editing → rendering → teasers → idle
         self.cancel = threading.Event()
         self.events = queue.Queue()
@@ -199,8 +216,6 @@ class Worker:
         self.message.set('Stopping…')
 
     def close_window(self):
-        if self.stage == 'confirm':
-            self.cancelled()
         self.window.withdraw()
 
     def cuts_registry(self):
@@ -209,53 +224,43 @@ class Worker:
         except (OSError, ValueError):
             return {}
 
-    def confirm_cuts(self, request, record):
-        """A reviewed cuts timeline: every piece on its top track becomes one clip and teaser."""
-        timeline = request['timeline']
-        kind, track = next(((k, t) for k in ('video', 'audio') for t in timeline[k] if t['items']), (None, None))
-        if not track:
-            raise ValueError('The cuts timeline is empty.')
-        pieces = sorted((i for i in track['items'] if i.get('enabled', True)), key=lambda i: i['start'])
-        output, stem = record['output'], record['stem']
-        number = d.next_number(stem, d.existing_names(output) + list(request.get('queued', [])))
-        jobs = []
-        for n, piece in enumerate(pieces, number):
-            frames = int(piece['end'] - piece['start'])
-            jobs.append(dict(name=f'{stem} {n}', teaser=f'{stem} {n}T', mark_in=int(piece['start']),
-                             mark_out=int(piece['end']) - 1, frames=frames,
-                             teaser_frames=min(record['teaser_frames'], frames)))
-        fps = d.parse_fps(timeline['fps'])
-        total = sum(j['frames'] for j in jobs) / float(fps)
-        batch = dict(record, action='render', fps=str(fps), jobs=jobs)
-        self.stage = 'confirm'
-        self.show('Render your cuts', f"{len(jobs)} clips on \"{timeline['name']}\" ({clock(total)} in all), "
-                  f"each piece on {kind[0].upper()}{track['index']} as one clip plus teaser: "
-                  f"{jobs[0]['name']} to {jobs[-1]['name']}, into {output}. Close this window to cancel.", 0,
-                  (f'Render {len(jobs)} clips', lambda: self.render(batch)))
-
     def open_editor(self, request):
-        self.request, self.seen, self.stage = request, request['id'], 'editing'
+        self.request, self.seen, self.stage, self.seq, self.waiting = request, request['id'], 'editing', 0, None
         self.cancel.clear()
         self.window.withdraw()
         write_state(self.home, request['id'], 'editing')
         try:
+            # A cuts timeline made earlier opens with its pieces as the clips, and its saved name and folder.
             record = self.cuts_registry().get(request['timeline']['name'])
-            if record:
-                return self.confirm_cuts(request, record)
-            Editor(self.root, request, self.settings, self.render, self.cancelled)
+            self.editor = Editor(self.root, request, self.settings, self.render, self.cancelled, self.send,
+                                 pieces=record and pieces_of(request['timeline']), defaults=record)
         except Exception as error:
             write_state(self.home, request['id'], 'error', message=f'Could not read the timeline: {error}')
             self.done('Could not open', str(error))
 
+    def send(self, command, record=None):
+        """A command from the open window to the waiting Resolve script; its reply goes back to the window."""
+        self.seq += 1
+        self.waiting, self.record = time.time(), record
+        write_state(self.home, self.request['id'], 'ready', seq=self.seq, **command)
+        log(self.home, f"sent {command['action']} to Resolve")
+
+    def reply(self, result):
+        self.waiting = None
+        if result['status'] == 'cuts_ready' and self.record:
+            registry = self.cuts_registry()
+            registry[result['timeline']] = self.record
+            atomic_text(self.home / 'cuts.json', json.dumps(registry, indent=1))
+        log(self.home, f"Resolve: {result['status']} {result.get('message', '')}")
+        if self.editor:
+            self.editor.on_result(result)
+
     def cancelled(self):
         write_state(self.home, self.request['id'], 'cancelled')
-        self.stage = 'idle'
+        self.stage, self.editor = 'idle', None
 
     def render(self, batch):
-        self.batch = batch
-        if batch.get('action') == 'cuts':
-            return self.make_cuts(batch)
-        self.stage = 'rendering'
+        self.batch, self.editor, self.stage = batch, None, 'rendering'
         try:
             self.settings_file.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
         except OSError:
@@ -265,27 +270,14 @@ class Worker:
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         (batches / f'{stamp}.json').write_text(json.dumps(dict(request=self.request, batch=batch), indent=1), encoding='utf-8')
         jobs = [dict(name=j['name'], mark_in=j['mark_in'], mark_out=j['mark_out']) for j in batch['jobs']]
-        write_state(self.home, self.request['id'], 'ready', preset=PRESET, output=Path(batch['output']).as_posix(), jobs=jobs)
+        self.seq += 1
+        target = {'timeline': batch['timeline']} if batch.get('timeline') else {}
+        write_state(self.home, self.request['id'], 'ready', seq=self.seq, action='render', preset=PRESET,
+                    output=Path(batch['output']).as_posix(), jobs=jobs, **target)
         self.last_update = time.time()
-        log(self.home, f"render requested: {', '.join(j['name'] for j in jobs)} -> {batch['output']}")
+        log(self.home, f"render requested: {', '.join(j['name'] for j in jobs)} from "
+            f"{batch.get('timeline') or self.request['timeline']['name']} -> {batch['output']}")
         self.show('Rendering your clips', f'Queuing {len(jobs)} clips in Resolve…')
-
-    def make_cuts(self, batch):
-        self.stage, self.last_update = 'cutting', time.time()
-        start = int(self.request['timeline']['start'])
-        clips = [dict(first=j['mark_in'] - start, last=j['mark_out'] - start) for j in batch['jobs']]
-        write_state(self.home, self.request['id'], 'ready', action='cuts', clips=clips)
-        log(self.home, f"cuts timeline requested: {len(clips)} clips from {self.request['timeline']['name']}")
-        self.show('Making the cuts timeline', f'Laying out {len(clips)} clips in Resolve…')
-
-    def cuts_ready(self, name):
-        registry = self.cuts_registry()
-        registry[name] = {k: self.batch[k] for k in ('stem', 'output', 'teaser_frames', 'fade')}
-        atomic_text(self.home / 'cuts.json', json.dumps(registry, indent=1))
-        log(self.home, f'cuts timeline ready: {name}')
-        self.done('Cuts timeline ready', f'Review "{name}" in Resolve: blade to cut, delete a through edit to merge, '
-                  'delete a piece to skip it. Then run Audio Sections again with that timeline open to render '
-                  'each piece and its teaser.')
 
     def teasers(self):
         log(self.home, 'Resolve finished rendering; making teasers')
@@ -329,19 +321,27 @@ class Worker:
                 log(self.home, f'error: {value}')
                 self.done('Could not finish', value)
         result = read_pref(self.prefs, 'AudioSectionsResultV1')
-        if result and result.get('id') != self.result_seen and result.get('status') in ('error', 'complete', 'cuts_ready'):
-            self.result_seen = result.get('id')
-            if result['status'] == 'error' and self.stage != 'teasers':
+        if result and result_key(result) != self.result_seen:
+            self.result_seen = result_key(result)
+            mine = result.get('id') == self.seen
+            if result['status'] in ('cuts_ready', 'pieces', 'command_error') and mine and self.stage == 'editing':
+                self.reply(result)
+            elif result['status'] == 'error' and self.stage != 'teasers':
                 log(self.home, f"Resolve error: {result.get('message', '')}")
+                if self.editor:
+                    self.editor.close_quietly()
+                    self.editor = None
                 self.done('Could not finish', result.get('message', ''))
-            elif result['status'] == 'cuts_ready' and self.stage == 'cutting' and result['id'] == self.seen:
-                self.cuts_ready(result.get('timeline') or '')
-            elif result['status'] == 'complete' and self.stage == 'rendering' and result['id'] == self.seen:
+            elif result['status'] == 'complete' and self.stage == 'rendering' and mine:
                 self.teasers()
-        elif self.stage == 'rendering' and result and result.get('id') == self.seen and result.get('status') == 'rendering':
-            self.message.set(result.get('message', ''))
-            self.progress['value'] = result.get('progress', 0)
-        if self.stage in ('rendering', 'cutting') and time.time() - max(self.last_update, resolve_heartbeat(self.prefs)) > 90:
+            elif result['status'] == 'rendering' and self.stage == 'rendering' and mine:
+                self.message.set(result.get('message', ''))
+                self.progress['value'] = result.get('progress', 0)
+        if self.waiting and time.time() - self.waiting > 120 and self.editor:
+            self.waiting = None
+            self.editor.on_result(dict(status='command_error', message='Resolve did not answer. Is it still open with '
+                                       'the Audio Sections script running? Close this window and run it again.'))
+        if self.stage == 'rendering' and time.time() - max(self.last_update, resolve_heartbeat(self.prefs)) > 90:
             log(self.home, 'gave up: no word from Resolve for 90 s')
             self.done('Could not finish', 'Resolve stopped responding. Check its render queue, then run Audio Sections again.')
         request = read_pref(self.prefs, 'AudioSectionsRequestV2')

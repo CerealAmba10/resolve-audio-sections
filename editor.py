@@ -23,7 +23,8 @@ SETTINGS = [('min_silence', 'Split at silence of at least (s)', 0.1, 0.1, 600),
             ('min_dead', 'Cut out dead silence over (s, 0 = off)', 0.5, 0, 600),
             ('cut_window', 'Cut at quietest point in last (s)', 5, 1, 600),
             ('teaser', 'Teaser length (s)', 1, 1, 600),
-            ('fade', 'Teaser fade-out (s)', 0.25, 0, 30)]
+            ('fade', 'Teaser fade-out (s)', 0.25, 0, 30),
+            ('clip_fade', 'Fade out end of each clip (s)', 0.25, 0, 30)]
 
 
 def clock(seconds):
@@ -33,7 +34,7 @@ def clock(seconds):
 
 
 class Editor:
-    def __init__(self, master, request, settings, on_render, on_cancel):
+    def __init__(self, master, request, settings, on_render, on_cancel, send=None, pieces=None, defaults=None):
         self.request, self.settings = request, settings
         self.on_render, self.on_cancel = on_render, on_cancel
         timeline = request['timeline']
@@ -52,6 +53,12 @@ class Editor:
                             threshold=tk.DoubleVar(value=-40.0), envelope=None, auto=None)
                        for track in timeline['audio']]
         self.sections, self.selected, self.edited = [], None, False
+        # Review in Resolve: send() talks to the waiting script. `loaded` holds pieces read from a cuts
+        # timeline (they replace detection until a setting changes); `target` is where they render from.
+        self.send, self.defaults, self.quiet, self.busy = send, defaults or {}, False, False
+        self.loaded = [dict(start=a, end=b) for a, b in pieces] if pieces else None
+        self.cuts_name = request['timeline']['name'] if pieces else None
+        self.target = None
         self.view = [0.0, max(self.duration, 1.0)]
         self.drag = None
         self.events, self.cancel = queue.Queue(), threading.Event()
@@ -118,7 +125,7 @@ class Editor:
                         ).grid(row=len(SETTINGS), column=0, columnspan=2, sticky='w', pady=(4, 0))
         # Re-cut whenever anything changes, however it was changed (typing, arrows, wheel, paste, drag).
         for var in [*self.values.values(), self.pauses, *(t[k] for t in self.tracks for k in ('role', 'threshold'))]:
-            var.trace_add('write', lambda *args: self.schedule())
+            var.trace_add('write', lambda *args: self.changed())
         self.pauses.trace_add('write', lambda *args: self.show_mode())
         self.show_mode()
 
@@ -158,9 +165,9 @@ class Editor:
         out = ttk.LabelFrame(bottom, text='Output', padding=8)
         out.grid(row=0, column=2, sticky='nsew', padx=(10, 0))
         source = self.main_source()
-        self.stem = tk.StringVar(value=Path(source).stem if source else timeline['name'])
-        self.folder = tk.StringVar(value=str(Path(source).parent / 'Audio Sections Exports') if source
-                                   else str(Path.home() / 'Videos/Audio Sections Exports'))
+        self.stem = tk.StringVar(value=self.defaults.get('stem') or (Path(source).stem if source else timeline['name']))
+        self.folder = tk.StringVar(value=self.defaults.get('output') or (
+            str(Path(source).parent / 'Audio Sections Exports') if source else str(Path.home() / 'Videos/Audio Sections Exports')))
         ttk.Label(out, text='File name').grid(row=0, column=0, sticky='w')
         ttk.Entry(out, textvariable=self.stem, width=34).grid(row=0, column=1, columnspan=2, sticky='ew', pady=2)
         ttk.Label(out, text='Folder').grid(row=1, column=0, sticky='w')
@@ -176,6 +183,8 @@ class Editor:
         self.cuts_button = ttk.Button(buttons, text='Make cuts in Resolve', state='disabled',
                                       command=lambda: self.render('cuts'))
         self.cuts_button.pack(side='left', padx=(8, 0))
+        self.load_button = ttk.Button(buttons, text='Load edits from Resolve', state='disabled', command=self.load_edits)
+        self.load_button.pack(side='left', padx=(8, 0))
         self.render_button = ttk.Button(buttons, text='Render', command=self.render, state='disabled')
         self.render_button.pack(side='left', padx=(8, 0))
         self.status = tk.StringVar(value='')
@@ -216,7 +225,9 @@ class Editor:
                 track['status'].configure(text=f'scanning {value:.0%}')
             elif kind == 'track':
                 track['envelope'], track['auto'] = value, d.auto_threshold(value)
+                self.quiet = True                 # the automatic level is not a user change
                 track['threshold'].set(track['auto'])
+                self.quiet = False
                 silent = max(value, default=d.FLOOR_DB) <= -90
                 track['status'].configure(text='no sound found' if silent else f"auto {track['auto']:g} dB",
                                           foreground=COLORS['off'] if silent else COLORS['dim'])
@@ -225,8 +236,10 @@ class Editor:
                 track['status'].configure(text='scan failed', foreground=COLORS['off'])
                 messagebox.showerror('Audio scan failed', f"{track['label']}:\n{value}", parent=self.win)
         if all(t['envelope'] is not None or 'failed' in str(t['status'].cget('text')) for t in self.tracks):
+            busy = self.busy
             for button in (self.render_button, self.cuts_button):
-                button.configure(state='normal' if self.included() else 'disabled')
+                button.configure(state='normal' if self.included() and not busy else 'disabled')
+            self.load_button.configure(state='normal' if self.cuts_name and not busy else 'disabled')
         self.win.after(100, self.poll)
 
     def threshold(self, track):
@@ -257,7 +270,9 @@ class Editor:
         envelopes, thresholds = [t['envelope'] for t in primary], [self.threshold(t) for t in primary]
         audible = [t['envelope'] for t in self.tracks if t['envelope'] is not None and t['enabled']]
         min_length = self.setting('min_clip')
-        if self.pauses.get():
+        if self.loaded is not None:
+            self.sections = [dict(p, keep=True) for p in self.loaded]
+        elif self.pauses.get():
             runs = d.active_runs(envelopes, thresholds)
             self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
                                             self.setting('min_burst'), min_length)
@@ -271,7 +286,7 @@ class Editor:
                                           self.setting('padding'))
         for section in self.sections:
             section['use'] = section['keep']
-        if self.edited:
+        if self.edited and self.loaded is None:
             self.status.set('Settings changed, so manual trims were reset.')
         self.edited, self.selected = False, None
         self.refresh_table()
@@ -436,6 +451,7 @@ class Editor:
             else:
                 s['end'] = min(high, s['start'] + cap, max(s['start'] + 1, seconds))
             s['keep'] = s['end'] - s['start'] > self.setting('min_clip')
+            s.pop('frames', None)
             s['use'] = s['use'] or s['keep']
             self.edited, self.selected = True, a
             self.refresh_table()
@@ -480,28 +496,76 @@ class Editor:
         teaser_frames = round(self.setting('teaser') * float(self.fps))
         jobs, number = [], self.first_number()
         for s in self.included():
-            first, last = d.to_frames(s['start'], s['end'], self.fps)
+            first, last = s.get('frames') or d.to_frames(s['start'], s['end'], self.fps)
             name = f'{stem} {number}'
             for output in (name, name + 'T'):
                 if (folder / (output + '.mp4')).exists():
                     return messagebox.showerror('Already exists', f'{output}.mp4 already exists in that folder.', parent=self.win)
-            jobs.append(dict(name=name, teaser=name + 'T', mark_in=self.timeline['start'] + first,
-                             mark_out=self.timeline['start'] + last, frames=last - first + 1,
+            base = self.target['start'] if self.target else self.timeline['start']
+            jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first,
+                             mark_out=base + last, frames=last - first + 1, first=first, last=last,
                              teaser_frames=min(teaser_frames, last - first + 1),   # short clip: whole clip
                              start=s['start'], end=s['end']))
             number += 1
         if not jobs:
             return
         folder.mkdir(parents=True, exist_ok=True)
+        if action == 'cuts':
+            self.busy = True
+            self.status.set('Making the cuts timeline in Resolve…')
+            return self.send(dict(action='cuts', clips=[dict(first=j['first'], last=j['last']) for j in jobs]),
+                             record=dict(stem=stem, output=str(folder), teaser_frames=teaser_frames,
+                                         fade=self.setting('fade'), clip_fade=self.setting('clip_fade')))
         roles = dict(self.settings.get('roles', {}))
         roles.update({t['name'] or f"A{t['index']}": t['role'].get() for t in self.tracks})
         self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get())
         self.cancel.set()
         self.win.destroy()
-        self.on_render(dict(action=action, stem=stem, output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,
-                            fade=self.setting('fade'), jobs=jobs,
+        self.on_render(dict(stem=stem, output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,
+                            fade=self.setting('fade'), clip_fade=self.setting('clip_fade'), jobs=jobs,
+                            timeline=self.target['name'] if self.target else None,
                             tracks={t['label']: dict(role=t['role'].get(), threshold=self.threshold(t))
                                     for t in self.tracks}))
+
+    def changed(self):
+        """A setting, role or level changed: go back to automatic cuts on the scanned timeline."""
+        if self.quiet:
+            return
+        if self.loaded is not None:
+            self.status.set('Settings changed: showing automatic cuts again. Load edits to get your Resolve pieces back.')
+        self.loaded = self.target = None
+        self.schedule()
+
+    def load_edits(self):
+        self.busy = True
+        self.status.set(f'Reading "{self.cuts_name}" from Resolve…')
+        self.send(dict(action='pieces', timeline=self.cuts_name))
+
+    def on_result(self, result):
+        """A reply from Resolve to Make cuts or Load edits."""
+        if not self.win.winfo_exists():
+            return
+        self.busy = False
+        if result['status'] == 'cuts_ready':
+            self.cuts_name = result['timeline']
+            self.status.set(f'Made "{self.cuts_name}" in Resolve. Edit it there (blade to cut, delete a through edit '
+                            'to merge, delete a piece to skip it), then click Load edits from Resolve.')
+        elif result['status'] == 'pieces':
+            start = int(result['start'])
+            self.loaded = [dict(start=float((p['start'] - start) / self.fps), end=float((p['end'] - start) / self.fps),
+                                frames=(int(p['start']) - start, int(p['end']) - start - 1)) for p in result['pieces']]
+            self.target = dict(name=result['timeline'], start=start)
+            self.recompute()
+            self.status.set(f'Loaded {len(self.loaded)} pieces from "{result["timeline"]}". Render will render them '
+                            'from that timeline. Changing a setting goes back to automatic cuts.')
+        else:
+            self.status.set('')
+            messagebox.showerror('Resolve', result.get('message', 'Resolve could not do that.'), parent=self.win)
+
+    def close_quietly(self):
+        self.cancel.set()
+        if self.win.winfo_exists():
+            self.win.destroy()
 
     def close(self):
         self.cancel.set()
