@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Post Helper</title>
+<link rel="stylesheet" href="helper.css">
+<h1>Post Helper</h1>
+<ol>
+  <li>In the Audio Sections planner, select posts and click <b>Export batch</b>.</li>
+  <li>Click <b>Import batch</b> below, open the exported folder, select everything in it (Ctrl+A) and click Open.
+    Import several site folders one after another if you like.</li>
+  <li>Open the site and its new post form. A Post Helper card shows the next post: click
+    <b>Fill clip + caption</b>, set the schedule and options it lists, check everything, and click the site's own Post button.</li>
+  <li>Click <b>I posted it</b> on the card, and the next post appears.</li>
+</ol>
+<p><label class="button">Import batch <input id="import" type="file" multiple accept=".json,video/*" hidden></label>
+  <button id="clear">Remove posted and skipped</button>
+  <button id="shapes" title="Field names and types of the Fansly stats saved so far. No numbers, names or IDs.">Export Fansly data shapes</button></p>
+<p id="message"></p>
+<table>
+  <thead><tr><th>Site</th><th>Post at</th><th>Clip</th><th>Caption</th><th>Status</th><th></th></tr></thead>
+  <tbody id="posts"></tbody>
+</table>
+<script src="sites.js"></script>
+<script src="store.js"></script>
+<script src="helper.js"></script>

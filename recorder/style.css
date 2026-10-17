@@ -1,0 +1,5 @@
+body { font: 16px "Segoe UI", sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; line-height: 1.5; }
+button { font: inherit; padding: 6px 14px; }
+#shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+#shots label { display: block; font-size: 13px; }
+#shots img { display: block; width: 100%; margin-top: 4px; border: 1px solid #ccc; }

@@ -1,0 +1,41 @@
+{
+  "manifest_version": 2,
+  "name": "Upload Layout Recorder",
+  "version": "1.0",
+  "description": "Records which buttons and fields you use on upload pages. Never records typed text, passwords or sign-in screens. Nothing is sent anywhere; you save a zip yourself.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "upload-layout-recorder@audio-sections",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "<all_urls>",
+    "tabs",
+    "webRequest",
+    "downloads"
+  ],
+  "background": {
+    "scripts": [
+      "sites.js",
+      "zip.js",
+      "background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.fansly.com/*",
+        "*://*.redgifs.com/*",
+        "*://*.pornhub.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_action": {
+    "default_title": "Upload Layout Recorder: review and save"
+  }
+}
