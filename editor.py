@@ -13,13 +13,14 @@ RULER, CLIP_LANE, LANE = 22, 30, 58
 DB_MIN = -80.0
 COLORS = dict(bg='#1c1d21', lane='#25272d', grid='#34363d', text='#c9ccd3', dim='#7c808a', primary='#4fb3ff',
               background='#5d616b', threshold='#ffb547', keep='#3ddc97', quiet='#a78bfa', short='#6b6f78', off='#a8443f', select='#ffffff')
+PAUSE_ONLY = {'min_silence', 'min_burst', 'min_quiet'}
 SETTINGS = [('min_silence', 'Split at silence of at least (s)', 0.1, 0.1, 600),
             ('padding', 'Padding around speech (s)', 0.05, 0, 10),
             ('min_burst', 'Ignore sounds shorter than (s)', 0.05, 0, 5),
             ('min_clip', 'Keep clips longer than (s)', 1, 0, 36000),
             ('max_length', 'Longest clip (s, 0 = no limit)', 10, 0, 36000),
             ('min_quiet', 'Also export quiet over (s, 0 = never)', 5, 0, 36000),
-            ('min_dead', 'Hard-cut dead silence over (s, 0 = off)', 0.25, 0, 60),
+            ('min_dead', 'Cut out dead silence over (s, 0 = off)', 0.5, 0, 600),
             ('cut_window', 'Cut at quietest point in last (s)', 5, 1, 600),
             ('teaser', 'Teaser length (s)', 1, 1, 600),
             ('fade', 'Teaser fade-out (s)', 0.25, 0, 30)]
@@ -91,12 +92,9 @@ class Editor:
                       width=28).grid(row=row, column=0, sticky='w')
             box = ttk.Combobox(tracks, textvariable=track['role'], values=ROLES, state='readonly', width=11)
             box.grid(row=row, column=1, padx=6, pady=2)
-            box.bind('<<ComboboxSelected>>', lambda e: self.schedule())
             ttk.Label(tracks, text='Silence below').grid(row=row, column=2, padx=(10, 4))
-            spin = ttk.Spinbox(tracks, textvariable=track['threshold'], from_=-90, to=-5, increment=1, width=7,
-                               command=self.schedule)
-            spin.grid(row=row, column=3)
-            spin.bind('<KeyRelease>', lambda e: self.schedule())
+            ttk.Spinbox(tracks, textvariable=track['threshold'], from_=-90, to=-5, increment=1,
+                        width=7).grid(row=row, column=3)
             ttk.Label(tracks, text='dBFS').grid(row=row, column=4, padx=(4, 8))
             ttk.Button(tracks, text='Auto', width=6, command=lambda t=track: self.auto(t)).grid(row=row, column=5)
             track['status'] = ttk.Label(tracks, text='scanning…', foreground=COLORS['dim'], width=16)
@@ -106,17 +104,23 @@ class Editor:
 
         options = ttk.LabelFrame(top, text='Cutting', padding=8)
         options.grid(row=0, column=1, sticky='nsew', padx=(10, 0))
-        self.values = {}
+        self.values, self.pause_widgets = {}, []
         for row, (key, label, step, low, high) in enumerate(SETTINGS):
             self.values[key] = tk.DoubleVar(value=self.settings.get(key, d.DEFAULTS[key]))
-            ttk.Label(options, text=label).grid(row=row, column=0, sticky='w')
-            spin = ttk.Spinbox(options, textvariable=self.values[key], from_=low, to=high, increment=step,
-                               width=7, command=self.schedule)
+            text = ttk.Label(options, text=label)
+            text.grid(row=row, column=0, sticky='w')
+            spin = ttk.Spinbox(options, textvariable=self.values[key], from_=low, to=high, increment=step, width=7)
             spin.grid(row=row, column=1, padx=(8, 0), pady=1)
-            spin.bind('<KeyRelease>', lambda e: self.schedule())
+            if key in PAUSE_ONLY:
+                self.pause_widgets += [text, spin]
         self.pauses = tk.BooleanVar(value=self.settings.get('pauses', False))
-        ttk.Checkbutton(options, text='Also split at pauses in Primary tracks', variable=self.pauses,
-                        command=self.schedule).grid(row=len(SETTINGS), column=0, columnspan=2, sticky='w', pady=(4, 0))
+        ttk.Checkbutton(options, text='Also split at pauses in Primary tracks', variable=self.pauses
+                        ).grid(row=len(SETTINGS), column=0, columnspan=2, sticky='w', pady=(4, 0))
+        # Re-cut whenever anything changes, however it was changed (typing, arrows, wheel, paste, drag).
+        for var in [*self.values.values(), self.pauses, *(t[k] for t in self.tracks for k in ('role', 'threshold'))]:
+            var.trace_add('write', lambda *args: self.schedule())
+        self.pauses.trace_add('write', lambda *args: self.show_mode())
+        self.show_mode()
 
         self.canvas = tk.Canvas(outer, background=COLORS['bg'], highlightthickness=0, height=
                                 RULER + CLIP_LANE + LANE * max(1, len(self.tracks)) + 8)
@@ -180,6 +184,11 @@ class Editor:
             self.status.set(f'{self.untrusted} audio item(s) are retimed or report unusual source times; '
                             'their detection may be slightly offset.')
 
+    def show_mode(self):
+        """Grey out the settings that only apply when splitting at pauses."""
+        for widget in self.pause_widgets:
+            widget.state(['!disabled'] if self.pauses.get() else ['disabled'])
+
     def main_source(self):
         items = [i for t in self.tracks if t['role'].get() == 'Primary' for i in t['items'] if i.get('path')]
         items = items or [i for t in self.tracks for i in t['items'] if i.get('path')]
@@ -229,7 +238,6 @@ class Editor:
     def auto(self, track):
         if track['auto'] is not None:
             track['threshold'].set(track['auto'])
-            self.schedule()
 
     # ---------- detection ----------
     def setting(self, key):
@@ -246,21 +254,21 @@ class Editor:
     def recompute(self):
         self.pending = None
         primary = [t for t in self.tracks if t['envelope'] is not None and t['role'].get() == 'Primary']
+        envelopes, thresholds = [t['envelope'] for t in primary], [self.threshold(t) for t in primary]
         audible = [t['envelope'] for t in self.tracks if t['envelope'] is not None and t['enabled']]
-        dead = d.dead_spans(audible, self.setting('min_dead'))
         min_length = self.setting('min_clip')
-        runs = d.active_runs([t['envelope'] for t in primary], [self.threshold(t) for t in primary])
         if self.pauses.get():
+            runs = d.active_runs(envelopes, thresholds)
             self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
                                             self.setting('min_burst'), min_length)
             self.sections = d.add_quiet(self.sections, self.duration, self.setting('min_quiet'))
-            self.sections = d.cut_dead(self.sections, dead, min_length)
+            self.sections = d.cut_dead(self.sections, d.dead_spans(audible, self.setting('min_dead')), min_length)
+            self.sections = d.split_long(self.sections, self.setting('max_length'), self.setting('cut_window'),
+                                         envelopes, thresholds, min_length, runs, self.setting('padding'))
         else:
-            # Default: only digital silence is cut; every other sound is exported.
-            self.sections, runs = d.sound_sections(dead, self.duration, min_length), ()
-        self.sections = d.split_long(self.sections, self.setting('max_length'), self.setting('cut_window'),
-                                     [t['envelope'] for t in primary], [self.threshold(t) for t in primary], min_length,
-                                     runs, self.setting('padding'))
+            self.sections = d.sound_clips(audible, envelopes, thresholds, self.duration, self.setting('min_dead'),
+                                          min_length, self.setting('max_length'), self.setting('cut_window'),
+                                          self.setting('padding'))
         for section in self.sections:
             section['use'] = section['keep']
         if self.edited:
@@ -417,7 +425,6 @@ class Editor:
             top = self.lane_top(a) + 4
             db = DB_MIN * ((event.y - top) / (self.lane() - 8))
             self.tracks[a]['threshold'].set(round(max(DB_MIN, min(0.0, db)), 1))
-            self.schedule()
         else:
             s = self.sections[a]
             seconds = round(self.t(event.x) * float(self.fps)) / float(self.fps)

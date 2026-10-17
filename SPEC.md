@@ -11,7 +11,8 @@ GetSourceAudioChannelMapping routing; disabled items and muted mappings are sile
 measures RMS dBFS every 20 ms with FFmpeg across the routed channels together.
 
 Default mode: sections are everything between dead spans (every enabled track below -80 dBFS
-for at least min_dead), split by max_length at the quietest point, kept if longer than
+for at least min_dead, default 3 s), split by max_length at the quietest point (dead pauses of
+0.1 s or more at a cut are trimmed to padding on both sides), kept if longer than
 min_clip (1 s); a clip shorter than the teaser gets a whole-clip teaser. The optional
 pause mode adds the speech rules below.
 

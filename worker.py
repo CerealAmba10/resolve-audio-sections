@@ -21,6 +21,7 @@ import updater
 from media import frame_count, make_teaser, resource_path
 
 PRESET = 'Audio Sections High'
+SETTINGS_SCHEMA = 2      # bump when cutting defaults change, so saved old values are reset
 
 
 def home_directory():
@@ -119,6 +120,9 @@ class Worker:
             self.settings = json.loads(self.settings_file.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             self.settings = {}
+        if self.settings.get('schema') != SETTINGS_SCHEMA:
+            # Cutting defaults changed: drop saved cutting values once, keep track roles.
+            self.settings = dict(roles=self.settings.get('roles', {}), schema=SETTINGS_SCHEMA)
         self.prefs = Path(os.environ['APPDATA']) / 'Blackmagic Design/DaVinci Resolve/Support/Fusion/Profiles/Default/Fusion.prefs'
         self.seen = (read_pref(self.prefs, 'AudioSectionsRequestV2') or {}).get('id')
         self.result_seen = (read_pref(self.prefs, 'AudioSectionsResultV1') or {}).get('id')

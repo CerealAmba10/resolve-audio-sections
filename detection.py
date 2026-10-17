@@ -7,7 +7,7 @@ from pathlib import Path
 HOP = 0.02          # envelope resolution: one RMS value per 20 ms
 FLOOR_DB = -120.0   # value used for digital silence and timeline gaps
 
-DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_clip=1.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, min_dead=0.5, teaser=30.0, fade=1.0)
+DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_clip=1.0, max_length=180.0, cut_window=30.0, min_quiet=45.0, min_dead=3.0, teaser=30.0, fade=1.0)
 
 _NTSC = {'23.976': Fraction(24000, 1001), '29.97': Fraction(30000, 1001), '47.952': Fraction(48000, 1001),
          '59.94': Fraction(60000, 1001), '119.88': Fraction(120000, 1001)}
@@ -204,6 +204,15 @@ def split_long(sections, max_length, window, envelopes, thresholds, min_length, 
     return result
 
 
+def sound_clips(audible, primary, thresholds, duration, min_dead, min_clip, max_length, window, padding):
+    """Default cutting: clips end only at dead silence longer than min_dead (every audible track
+    below DEAD_DB); everything else is kept, split to max_length at the quietest point, where a
+    short dead pause is trimmed off both sides."""
+    sections = sound_sections(dead_spans(audible, min_dead), duration, min_clip)
+    sound = [(s['start'], s['end']) for s in sound_sections(dead_spans(audible, 0.1), duration, 0)]
+    return split_long(sections, max_length, window, primary, thresholds, min_clip, sound, padding)
+
+
 def to_frames(start, end, fps):
     """Inclusive frame range covering [start, end) seconds."""
     first = math.floor(Fraction(start).limit_denominator(10**6) * fps)
@@ -267,5 +276,18 @@ if __name__ == '__main__':
     pieces = cut_dead([dict(start=0, end=40, keep=True, quiet=True)], dead, 5)
     assert [(p['start'], p['end'], p['quiet']) for p in pieces] == [(0, 20.0, True), (30.0, 40, True)], pieces
     assert [(x['start'], x['end'], x['keep']) for x in sound_sections([(20.0, 30.0), (39.5, 40)], 40, 1)] ==         [(0.0, 20.0, True), (30.0, 39.5, True)]
+    # Noise-gated mic: 3 s phrases with 1 s dead pauses, one 10 s dead break at 400 s, 600 s in all.
+    gated = []
+    while len(gated) < 30000:
+        gated += [-30.0] * 150 + [-120.0] * 50
+        if len(gated) == 20000:
+            gated += [-120.0] * 500
+    gated = gated[:30000]
+    clips = sound_clips([gated], [gated], [-45], 600, 3.0, 1.0, 180, 30, 0.25)
+    lengths = [round(c['end'] - c['start'], 2) for c in clips]
+    assert len(clips) == 5 and all(c['keep'] for c in clips), lengths     # not 150 fragments
+    assert all(x <= 180 for x in lengths) and 395 < clips[2]['end'] <= 400.25 and clips[3]['start'] >= 409.75, clips
+    for a, b in zip(clips, clips[1:3]):     # 3-minute cuts landed in dead pauses, trimmed to padding
+        assert b['start'] - a['end'] >= 0.5 and gated[int(a['end'] / HOP) + 1] == -120.0, (a, b)
     assert next_number('duck test', ['duck test 1T', 'duck test 3', 'other 9']) == 4
     print('detection ok')

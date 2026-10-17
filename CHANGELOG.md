@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3
+
+- Noise-gated recordings no longer shatter into fragments: only dead silence over 3 s ends a
+  clip; shorter dead pauses stay inside, and 3-minute cuts trim the dead pause they land in.
+- Every setting change re-cuts the preview and clip list immediately (typing, arrows, wheel).
+- Pause-only settings are greyed out unless "Also split at pauses" is ticked.
+- Saved cutting settings from older versions are reset once; track roles are kept.
+
 ## 1.2
 
 - Default: cut only at digital silence and export everything else, however quiet, in clips of
