@@ -28,6 +28,13 @@ section, split by length but never trimmed. Then dead spans (every scanned track
 either side as separate sections that must still exceed max(min_length, teaser). The preview re-cuts instantly and
 supports zoom, frame-snapped manual trims and per-clip skip.
 
+Make cuts: Lua creates "<name> (cuts)" (unique), matches frame rate, resolution and track
+formats, and appends each clip's overlap with every enabled source item (AppendToTimeline
+with source frames, exclusive endFrame, trackIndex, recordFrame, channel mapping), coloring
+clips alternately; on failure the timeline is deleted. The helper records the timeline name
+with output, stem, teaser and fade. Running on a recorded cuts timeline skips scanning: each
+enabled item on the first non-empty track (video first) is one clip.
+
 For each chosen section, queue one Resolve job on the source timeline with MarkIn/MarkOut
 (absolute frames, inclusive) and the bundled Audio Sections High preset at the timeline
 resolution. Refuse if the project changed or the timeline was edited since scanning; on a

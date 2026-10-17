@@ -42,6 +42,14 @@ shortcut named **Audio Sections**.
    teaser ends. Grey blocks are too short.
 5. Click **Render N clips**. Leave Resolve open until the window says it is done.
 
+**Check the cuts in Resolve first (optional).** Click **Make cuts in Resolve** instead of
+Render. A new timeline, "<name> (cuts)", is built with every clip as separate pieces on every
+track at its original position, colored alternately. Watch it and edit it: blade to cut a
+clip further, delete a through edit to merge two pieces, delete a piece to skip it. Then,
+with that timeline open, choose **Workspace → Scripts → Audio Sections** again: each piece
+on the top track renders as one clip plus its teaser. The cuts timeline holds plain media,
+so effects and transforms from the original timeline are not copied onto it.
+
 By default only **digital silence** is cut out: stretches where every audible track
 (Background included) is below -80 dBFS, i.e. no sound at all. Everything else is exported,
 however quiet, in clips of at most 3 minutes. Tick **Also split at pauses in Primary tracks**

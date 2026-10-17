@@ -43,6 +43,18 @@ project = {GetName=function() return 'P' end, IsRenderingInProgress=function() l
     GetRenderJobStatus=function() return {JobStatus='Complete', CompletionPercentage=100} end}
 resolve = {GetProjectManager=function() return {GetCurrentProject=function() return project end,
     SaveProject=function() return true end} end}
+appended, colors, video_tracks = {}, {}, 1
+cuts = {GetStartFrame=function() return 86400 end, SetSettings=function() return true end,
+    GetTrackCount=function(self, kind) return kind == 'video' and video_tracks or 1 end,
+    AddTrack=function(self, kind) if kind == 'video' then video_tracks = video_tracks + 1 end; return true end,
+    GetTrackSubType=function() return 'stereo' end}
+pool = {CreateEmptyTimeline=function(self, name) created = name; return cuts end,
+    AppendToTimeline=function(self, infos) table.insert(appended, infos[1])
+        return {{SetClipColor=function(_, c) table.insert(colors, c) end, SetSourceAudioChannelMapping=function() return true end}} end,
+    DeleteTimelines=function() deleted = true; return true end}
+project.GetMediaPool = function() return pool end
+project.GetTimelineCount = function() return 1 end
+project.GetTimelineByIndex = function() return {GetName=function() return 'Edit (cuts)' end} end
 prefs = {}
 fusion = {SetPrefs=function(self, k, v) prefs[k] = v end, GetPrefs=function(self, k) return prefs[k] end,
     SavePrefs=function() end}
@@ -95,6 +107,21 @@ class BridgeTest(unittest.TestCase):
         g, result = self.run_bridge(respond)
         self.assertEqual(result['status'], 'error')
         self.assertIn('edited', result['message'])
+        self.assertEqual(len(g.jobs), 0)
+
+    def test_cuts_timeline_places_each_clip_on_every_track(self):
+        def respond(home, request, g):
+            write_state(home, request['id'], 'ready', action='cuts',
+                        clips=[dict(first=600, last=1199), dict(first=2000, last=2999)])
+        g, result = self.run_bridge(respond)
+        self.assertEqual((result['status'], result['timeline']), ('cuts_ready', 'Edit (cuts 2)'), result)
+        placed = [dict(a) for a in g.appended.values()]
+        # Clip 1 = source frames 600-1199: V1, A1, A2 (V2's camera item ends before it). endFrame is exclusive.
+        self.assertEqual([(a['mediaType'], a['trackIndex'], a['startFrame'], a['endFrame'], a['recordFrame']) for a in placed],
+                         [(1, 1, 600, 1200, 87000), (2, 1, 600, 1200, 87000), (2, 2, 600, 1200, 87000),
+                          (1, 1, 2000, 3000, 88400), (2, 1, 2000, 3000, 88400), (2, 2, 2000, 3000, 88400)])
+        self.assertEqual(list(g.colors.values()), ['Teal'] * 3 + ['Orange'] * 3)
+        self.assertEqual(g.video_tracks, 2)
         self.assertEqual(len(g.jobs), 0)
 
 

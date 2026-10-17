@@ -42,9 +42,9 @@ local function base64(data)
     return table.concat(output)
 end
 
-local function announce(id, status, progress, message)
+local function announce(id, status, progress, message, timeline)
     f:SetPrefs('Global.AudioSectionsResultV1', base64(json({id = id, status = status,
-        progress = progress or 0, message = message or ''})))
+        progress = progress or 0, message = message or '', timeline = timeline})))
     f:SavePrefs()
 end
 
@@ -109,6 +109,69 @@ local function fingerprint(timeline)
     return table.concat(parts, '|')
 end
 
+-- Rebuild the chosen clips as separate pieces on a new timeline, each track at its original position,
+-- so they can be watched, bladed, merged (delete the through edit) or deleted in Resolve before rendering.
+-- Pieces are plain media: effects and transforms on the source items are not copied.
+local function build_cuts(p, source, clips)
+    local pool = p:GetMediaPool()
+    local names = {}
+    for i = 1, p:GetTimelineCount() do names[p:GetTimelineByIndex(i):GetName()] = true end
+    local name, n = source:GetName() .. ' (cuts)', 1
+    while names[name] do n = n + 1; name = source:GetName() .. ' (cuts ' .. n .. ')' end
+    local cuts = assert(pool:CreateEmptyTimeline(name), 'Could not create timeline ' .. name)
+    local ok, problem = pcall(function()
+        assert(p:SetCurrentTimeline(cuts), 'Could not open timeline ' .. name)
+        local s = source:GetSettings() or {}
+        cuts:SetSettings({useCustomSettings = '1', timelineFrameRate = s.timelineFrameRate,
+            timelineResolutionWidth = s.timelineResolutionWidth, timelineResolutionHeight = s.timelineResolutionHeight})
+        while cuts:GetTrackCount('video') < source:GetTrackCount('video') do
+            assert(cuts:AddTrack('video'), 'Could not add a video track.')
+        end
+        -- Match audio track formats (mono, stereo, 5.1...) so each source track lands on a like track.
+        local audio = source:GetTrackCount('audio')
+        local first_index = 2
+        if audio > 0 and call(cuts, 'GetTrackSubType', 'audio', 1) ~= call(source, 'GetTrackSubType', 'audio', 1) then
+            first_index = 1
+        end
+        for index = first_index, audio do
+            assert(cuts:AddTrack('audio', source:GetTrackSubType('audio', index)), 'Could not add audio track ' .. index)
+        end
+        if first_index == 1 then assert(cuts:DeleteTrack('audio', 1), 'Could not replace the first audio track.') end
+        local offset = cuts:GetStartFrame() - source:GetStartFrame()
+        local colors, placed = {'Orange', 'Teal'}, 0
+        for number, clip in ipairs(clips) do
+            local first, stop = source:GetStartFrame() + clip.first, source:GetStartFrame() + clip.last + 1
+            for _, kind in ipairs({'video', 'audio'}) do
+                for index = 1, source:GetTrackCount(kind) do
+                    for _, item in ipairs(source:GetItemListInTrack(kind, index) or {}) do
+                        local a, b = math.max(first, item:GetStart()), math.min(stop, item:GetEnd())
+                        local media = call(item, 'GetMediaPoolItem')
+                        if b > a and media and call(item, 'GetClipEnabled') ~= false then
+                            -- endFrame is exclusive in Resolve 21.1.1.
+                            local from = item:GetSourceStartFrame() + (a - item:GetStart())
+                            local added = pool:AppendToTimeline({{mediaPoolItem = media, startFrame = from,
+                                endFrame = from + (b - a), mediaType = kind == 'video' and 1 or 2,
+                                trackIndex = index, recordFrame = a + offset}})
+                            local piece = assert(added and added[1], 'Could not place a piece on ' .. kind .. ' track ' .. index)
+                            call(piece, 'SetClipColor', colors[number % 2 + 1])
+                            local mapping = kind == 'audio' and call(item, 'GetSourceAudioChannelMapping')
+                            if mapping then call(piece, 'SetSourceAudioChannelMapping', mapping) end
+                            placed = placed + 1
+                        end
+                    end
+                end
+            end
+        end
+        assert(placed > 0, 'No clips were placed on the cuts timeline.')
+    end)
+    if not ok then
+        pool:DeleteTimelines({cuts})
+        p:SetCurrentTimeline(source)
+        error(tostring(problem) .. ' The unfinished cuts timeline was removed.', 0)
+    end
+    return name
+end
+
 local id = tostring(os.time()) .. '-' .. tostring(math.random(100000, 999999))
 
 local function run()
@@ -159,6 +222,11 @@ local function run()
     assert(p:SetCurrentTimeline(timeline), 'Could not reopen timeline ' .. timeline:GetName())
     assert(fingerprint(timeline) == before, 'The timeline was edited after scanning. Run Audio Sections again.')
     assert(not p:IsRenderingInProgress(), 'Another render started. Try again when it finishes.')
+    if state.action == 'cuts' then
+        local name = build_cuts(p, timeline, state.clips)
+        announce(id, 'cuts_ready', 100, 'Review "' .. name .. '", then run Audio Sections again on it.', name)
+        return
+    end
 
     if not p:LoadRenderPreset(state.preset) then
         assert(resolve:ImportRenderPreset(HOME .. '/' .. state.preset .. '.xml')

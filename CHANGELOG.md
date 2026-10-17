@@ -5,6 +5,8 @@
 - Default: cut only at digital silence and export everything else, however quiet, in clips of
   at most 3 minutes. Speech-pause cutting is now an optional checkbox.
 - Short clips are no longer dropped (minimum 1 s); their teaser is the whole clip.
+- Make cuts in Resolve: build a "(cuts)" review timeline to blade, merge or delete pieces, then
+  run Audio Sections on it to render each piece and its teaser.
 - The minimum-length setting is reset to 1 s, replacing the old saved 30 s value.
 
 ## 1.1

@@ -169,6 +169,9 @@ class Editor:
         buttons = ttk.Frame(out)
         buttons.grid(row=3, column=0, columnspan=3, sticky='e')
         ttk.Button(buttons, text='Cancel', command=self.close).pack(side='left')
+        self.cuts_button = ttk.Button(buttons, text='Make cuts in Resolve', state='disabled',
+                                      command=lambda: self.render('cuts'))
+        self.cuts_button.pack(side='left', padx=(8, 0))
         self.render_button = ttk.Button(buttons, text='Render', command=self.render, state='disabled')
         self.render_button.pack(side='left', padx=(8, 0))
         self.status = tk.StringVar(value='')
@@ -213,7 +216,8 @@ class Editor:
                 track['status'].configure(text='scan failed', foreground=COLORS['off'])
                 messagebox.showerror('Audio scan failed', f"{track['label']}:\n{value}", parent=self.win)
         if all(t['envelope'] is not None or 'failed' in str(t['status'].cget('text')) for t in self.tracks):
-            self.render_button.configure(state='normal' if self.included() else 'disabled')
+            for button in (self.render_button, self.cuts_button):
+                button.configure(state='normal' if self.included() else 'disabled')
         self.win.after(100, self.poll)
 
     def threshold(self, track):
@@ -459,7 +463,8 @@ class Editor:
         if folder:
             self.folder.set(folder)
 
-    def render(self):
+    def render(self, action='render'):
+        """Render the chosen clips, or (action 'cuts') lay them out on a review timeline in Resolve."""
         stem, folder = self.stem.get().strip(), Path(self.folder.get().strip())
         if not stem or any(ch in stem for ch in '\\/:*?"<>|'):
             return messagebox.showerror('File name', 'Enter a file name without \\ / : * ? " < > |', parent=self.win)
@@ -486,7 +491,7 @@ class Editor:
         self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get())
         self.cancel.set()
         self.win.destroy()
-        self.on_render(dict(output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,
+        self.on_render(dict(action=action, stem=stem, output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,
                             fade=self.setting('fade'), jobs=jobs,
                             tracks={t['label']: dict(role=t['role'].get(), threshold=self.threshold(t))
                                     for t in self.tracks}))
