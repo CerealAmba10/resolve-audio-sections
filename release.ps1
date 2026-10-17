@@ -11,7 +11,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 powershell -NoProfile -ExecutionPolicy Bypass -File build_lite.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 Copy-Item -LiteralPath 'dist/Audio Sections Setup.exe' -Destination dist/AudioSectionsSetup.exe -Force
-git push
+git push origin HEAD:main
 if ($LASTEXITCODE -ne 0) { throw 'Push failed.' }
 gh release create "v$version" dist/AudioSectionsSetup.exe dist/AudioSectionsLite-Windows.zip --target (git rev-parse HEAD) --title "Audio Sections $version" --generate-notes
 if ($LASTEXITCODE -ne 0) { throw 'Release failed.' }
