@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0: GitHub releases and updates
+
+- Publish builds as GitHub releases (release.ps1). The helper checks for newer releases and
+  offers a one-click Update, verified against GitHub's published SHA-256 before installing.
+
 ## Multi-track rewrite
 
 - Cut the open timeline instead of one source file, with any number of video and audio tracks.

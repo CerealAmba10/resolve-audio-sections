@@ -16,6 +16,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from editor import Editor
+import updater
 from media import frame_count, make_teaser, resource_path
 
 PRESET = 'Audio Sections High'
@@ -135,6 +136,34 @@ class Worker:
         self.button = ttk.Button(frame, text='Stop', command=self.stop)
         self.button.pack(anchor='e', pady=(14, 0))
         self.root.after(250, self.poll)
+        threading.Thread(target=self.check_updates, daemon=True).start()
+
+    def check_updates(self):
+        # Offline or rate-limited checks just try again later; scans never wait on the network.
+        while True:
+            try:
+                found = updater.latest()
+                if found:
+                    self.events.put(('update', found))
+            except Exception:
+                pass
+            time.sleep(6 * 3600)
+
+    def offer_update(self, found):
+        self.show('Update available', f"Audio Sections {found['version']} is ready (you have {updater.VERSION}). "
+                  'Updating takes a few seconds; close this window to update later.', 0,
+                  ('Update', lambda: self.install_update(found)))
+
+    def install_update(self, found):
+        self.stage = 'updating'
+        self.show('Updating', f"Downloading Audio Sections {found['version']}…", 0, ('Close', self.window.withdraw))
+        def work():
+            try:
+                updater.apply(found, self.home)
+                self.events.put(('updated', None))
+            except Exception as error:
+                self.events.put(('error', f'Could not update: {error}'))
+        threading.Thread(target=work, daemon=True).start()
 
     def show(self, title, message, progress=0, button=('Stop', None)):
         self.title.set(title)
@@ -209,6 +238,13 @@ class Worker:
             if kind == 'progress':
                 self.progress['value'] = value[0] * 100
                 self.message.set(value[1])
+            elif kind == 'update':
+                if self.stage == 'idle':
+                    self.offer_update(value)
+            elif kind == 'updated':
+                # The new setup now asks this idle helper to exit, replaces it and starts the new one.
+                self.stage = 'idle'
+                self.message.set('Installing the update. Audio Sections restarts by itself.')
             elif kind == 'finished':
                 count = len(self.batch['jobs'])
                 note = '\n\nCheck: ' + ' '.join(value) if value else ''

@@ -5,9 +5,15 @@ silences in the tracks you choose. Offline, for **Windows, Resolve Free 21.1.1**
 
 ## Install once
 
-1. Unzip **AudioSectionsLite-Windows.zip** completely.
-2. Open **Audio Sections Setup.exe** and click **Install in DaVinci Resolve**.
+1. Download **AudioSectionsSetup.exe** from the
+   [latest release](https://github.com/CerealAmba10/resolve-audio-sections/releases/latest).
+2. Open it and click **Install in DaVinci Resolve**.
 3. If the command does not appear immediately, restart Resolve.
+
+**Updates:** the helper checks this repository's releases when Windows starts and every
+6 hours. When a newer version is out, a small window offers **Update**. Click it; the new
+version is downloaded, checked against the SHA-256 GitHub publishes, and installed in a few
+seconds. Close the window to update later. Updates are never offered while a clip job is running.
 
 No Python installation or account is needed. Setup reuses an existing FFmpeg and
 FFprobe pair from PATH/common install folders. If none is available, it downloads
@@ -136,6 +142,10 @@ python -m unittest discover -s tests -v
 powershell -File build_plugin.ps1
 powershell -File build_lite.ps1
 ```
+
+To publish an update: bump `VERSION` in updater.py, commit, then run
+`powershell -File release.ps1`. It tests, builds, pushes and creates the GitHub release
+`v<VERSION>` with AudioSectionsSetup.exe, which installed helpers then offer as an update.
 
 The installed Blackmagic SDK is the API reference:
 `C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer/Scripting/`.
