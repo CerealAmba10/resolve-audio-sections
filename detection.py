@@ -7,7 +7,7 @@ from pathlib import Path
 HOP = 0.02          # envelope resolution: one RMS value per 20 ms
 FLOOR_DB = -120.0   # value used for digital silence and timeline gaps
 
-DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_length=30.0, teaser=30.0, fade=1.0)
+DEFAULTS = dict(min_silence=1.0, padding=0.25, min_burst=0.1, min_length=30.0, max_length=180.0, cut_window=30.0, teaser=30.0, fade=1.0)
 
 _NTSC = {'23.976': Fraction(24000, 1001), '29.97': Fraction(30000, 1001), '47.952': Fraction(48000, 1001),
          '59.94': Fraction(60000, 1001), '119.88': Fraction(120000, 1001)}
@@ -102,6 +102,47 @@ def find_sections(runs, duration, min_silence, padding, min_burst, min_length):
     return sections
 
 
+def quietest(envelopes, thresholds, start, end, hop=HOP, smooth=0.5):
+    """Time in [start, end) where the primary tracks are quietest, relative to their thresholds,
+    averaged over `smooth` seconds so a brief stop inside a word does not win."""
+    first, last, width = int(start / hop), int(end / hop), max(1, round(smooth / hop))
+    level = [max((e[i] - t if i < len(e) else FLOOR_DB) for e, t in zip(envelopes, thresholds))
+             for i in range(first, last)] if envelopes else []
+    if len(level) <= width:
+        return end
+    total = sum(level[:width])
+    best, best_at = total, 0
+    for i in range(width, len(level)):
+        total += level[i] - level[i - width]
+        if total < best:
+            best, best_at = total, i - width + 1
+    return (first + best_at + width / 2) * hop
+
+
+def split_long(sections, max_length, window, envelopes, thresholds, min_length, runs=(), padding=0.0):
+    """Cut sections longer than max_length at their quietest point in the last `window`
+    seconds before max_length; the rest continues as the next clip, split the same way.
+
+    A cut that falls in a pause trims the pause off both clips, leaving `padding` of quiet
+    after the last sound and before the next, like any other clip edge.
+    """
+    if max_length <= 0:
+        return sections
+    result = []
+    for section in sections:
+        start, end = section['start'], section['end']
+        while end - start > max_length:
+            cut = quietest(envelopes, thresholds, start + max(1.0, max_length - window), start + max_length)
+            before = max((e for s, e in runs if start < e <= cut), default=cut)
+            after = min((s for s, e in runs if cut <= s < end), default=cut)
+            if any(s < cut < e for s, e in runs):
+                before = after = cut
+            result.append(dict(start=start, end=min(cut, before + padding), keep=cut - start > min_length))
+            start = max(cut, after - padding)
+        result.append(dict(start=start, end=end, keep=end - start > min_length))
+    return result
+
+
 def to_frames(start, end, fps):
     """Inclusive frame range covering [start, end) seconds."""
     first = math.floor(Fraction(start).limit_denominator(10**6) * fps)
@@ -139,5 +180,15 @@ if __name__ == '__main__':
     assert [(x['start'], x['end'], x['keep']) for x in s] == [(0, 2.0, True), (2.0, 3.5, False)], s
     assert auto_threshold([-80] * 100 + [-20] * 900) == -44.0      # peaks -20 dB: 24 dB under
     assert auto_threshold([-42] * 100 + [-30] * 900) == -36.0      # loud hiss at -42: stay 6 dB over it
+    # 400 s of speech with a quiet dip at 160-161 s: cut there, then again inside 310-340 s.
+    env = [-20.0] * 20000
+    env[8000:8050] = [-60.0] * 50
+    s = split_long([dict(start=0, end=400, keep=True)], 180, 30, [env], [-40], 30)
+    assert len(s) == 3 and s[0]['start'] == 0 and 160 <= s[1]['start'] <= 161, s
+    assert 310 <= s[2]['start'] <= 340.5 and s[-1]['end'] == 400 and all(x['end'] - x['start'] <= 180 for x in s), s
+    # Same dip as a real pause: both clips stop 0.25 s into it instead of sharing the silence.
+    s = split_long([dict(start=0, end=400, keep=True)], 180, 30, [env], [-40], 30,
+                   runs=[(0, 160.0), (161.0, 400)], padding=0.25)
+    assert (s[0]['end'], s[1]['start']) == (160.25, 160.75), s
     assert next_number('duck test', ['duck test 1T', 'duck test 3', 'other 9']) == 4
     print('detection ok')

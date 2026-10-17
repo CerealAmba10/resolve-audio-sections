@@ -9,6 +9,8 @@
   padding, click rejection and adjustable split length, instead of silencedetect on all streams.
 - Render full clips directly from the timeline with in/out marks, so every track, effect and
   mix is kept. Cut teasers from the rendered clips with FFmpeg and check frame counts.
+- Cap clip length (default 3:00): cut at the quietest point in the last 30 seconds before it,
+  continuing the rest as the next clip.
 - Remove the generated per-clip timelines, the old companion app and the Console workflow.
 
 ## Compact distribution

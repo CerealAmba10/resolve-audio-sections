@@ -13,8 +13,10 @@ measures RMS dBFS every 20 ms with FFmpeg across the routed channels together.
 A window lets the user mark tracks Primary or Background and set each primary track's
 silence level (auto: max(95th-percentile level - 24 dB, 2nd-percentile level + 6 dB)).
 Speech = any primary track above its level. Drop bursts shorter than min_burst; merge runs
-separated by less than min_silence; pad edges by padding, capped at the gap midpoint; keep
-sections strictly longer than max(min_length, teaser). The preview re-cuts instantly and
+separated by less than min_silence; pad edges by padding, capped at the gap midpoint; split
+sections longer than max_length (default 180 s) at the quietest 0.5 s, relative to each
+primary track's level, within the last cut_window (default 30 s) before max_length, repeating
+on the remainder; keep sections strictly longer than max(min_length, teaser). The preview re-cuts instantly and
 supports zoom, frame-snapped manual trims and per-clip skip.
 
 For each chosen section, queue one Resolve job on the source timeline with MarkIn/MarkOut

@@ -43,6 +43,7 @@ shortcut named **Audio Sections**.
 | Padding around speech | Extra room before the first word and after the last, never past the middle of a gap. |
 | Ignore sounds shorter than | Clicks and pops in a silence do not start a clip. |
 | Keep clips longer than | Shorter sections are shown but not rendered. |
+| Longest clip / cut at quietest point in last | A section longer than this (default 3:00) is cut at its quietest moment in the final window (default 2:30–3:00). The rest continues as the next clip, cut the same way. 0 turns it off. |
 | Teaser length / fade | Teaser duration and the fade-out at its end. |
 
 Mouse wheel zooms the preview; drag to scroll. Drag a green clip edge to trim it,

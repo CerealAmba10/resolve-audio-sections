@@ -17,6 +17,8 @@ SETTINGS = [('min_silence', 'Split at silence of at least (s)', 0.1, 0.1, 600),
             ('padding', 'Padding around speech (s)', 0.05, 0, 10),
             ('min_burst', 'Ignore sounds shorter than (s)', 0.05, 0, 5),
             ('min_length', 'Keep clips longer than (s)', 1, 1, 36000),
+            ('max_length', 'Longest clip (s, 0 = no limit)', 10, 0, 36000),
+            ('cut_window', 'Cut at quietest point in last (s)', 5, 1, 600),
             ('teaser', 'Teaser length (s)', 1, 1, 600),
             ('fade', 'Teaser fade-out (s)', 0.25, 0, 30)]
 
@@ -239,6 +241,9 @@ class Editor:
         min_length = max(self.setting('min_length'), self.setting('teaser'))
         self.sections = d.find_sections(runs, self.duration, self.setting('min_silence'), self.setting('padding'),
                                         self.setting('min_burst'), min_length)
+        self.sections = d.split_long(self.sections, self.setting('max_length'), self.setting('cut_window'),
+                                     [t['envelope'] for t in primary], [self.threshold(t) for t in primary], min_length,
+                                     runs, self.setting('padding'))
         for section in self.sections:
             section['use'] = section['keep']
         if self.edited:
@@ -401,10 +406,11 @@ class Editor:
             seconds = round(self.t(event.x) * float(self.fps)) / float(self.fps)
             low = self.sections[a - 1]['end'] if b == 'start' and a > 0 else 0.0
             high = self.sections[a + 1]['start'] if b == 'end' and a + 1 < len(self.sections) else self.duration
+            cap = self.setting('max_length') or self.duration
             if b == 'start':
-                s['start'] = max(low, min(s['end'] - 1, seconds))
+                s['start'] = max(low, s['end'] - cap, min(s['end'] - 1, seconds))
             else:
-                s['end'] = min(high, max(s['start'] + 1, seconds))
+                s['end'] = min(high, s['start'] + cap, max(s['start'] + 1, seconds))
             s['keep'] = s['end'] - s['start'] > max(self.setting('min_length'), self.setting('teaser'))
             s['use'] = s['use'] or s['keep']
             self.edited, self.selected = True, a
