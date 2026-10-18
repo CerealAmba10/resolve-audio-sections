@@ -234,7 +234,8 @@ class Editor:
                 self.recompute()
             else:
                 track['status'].configure(text='scan failed', foreground=COLORS['off'])
-                messagebox.showerror('Audio scan failed', f"{track['label']}:\n{value}", parent=self.win)
+                self.win.after(0, lambda t=track['label'], v=value: messagebox.showerror(
+                    'Audio scan failed', f'{t}:\n{v}', parent=self.win))
         if all(t['envelope'] is not None or 'failed' in str(t['status'].cget('text')) for t in self.tracks):
             busy = self.busy
             for button in (self.render_button, self.cuts_button):
@@ -560,7 +561,10 @@ class Editor:
                             'from that timeline. Changing a setting goes back to automatic cuts.')
         else:
             self.status.set('')
-            messagebox.showerror('Resolve', result.get('message', 'Resolve could not do that.'), parent=self.win)
+            message = result.get('message', 'Resolve could not do that.')
+            self.status.set('Resolve: ' + message)
+            # Shown after the helper's loop returns, so an open dialog never holds it up.
+            self.win.after(0, lambda: messagebox.showerror('Resolve', message, parent=self.win))
 
     def close_quietly(self):
         self.cancel.set()

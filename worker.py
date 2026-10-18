@@ -9,6 +9,7 @@ import sys
 import threading
 import queue
 import time
+import traceback
 import tkinter as tk
 from datetime import datetime
 from fractions import Fraction
@@ -168,6 +169,7 @@ class Worker:
         self.button.pack(anchor='e', pady=(14, 0))
         self.root.after(250, self.poll)
         threading.Thread(target=self.check_updates, daemon=True).start()
+        threading.Thread(target=self.beat, daemon=True).start()
 
     def check_updates(self):
         # Offline or rate-limited checks just try again later; scans never wait on the network.
@@ -292,12 +294,29 @@ class Worker:
                 self.events.put(('error', str(error)))
         threading.Thread(target=work, daemon=True).start()
 
+    def beat(self):
+        # Resolve's script treats a heartbeat older than 15 s as a dead helper. Writing it from its own thread
+        # keeps it fresh while the window is busy or a dialog is open.
+        while True:
+            try:
+                atomic_text(self.home / 'heartbeat.lua', f'return {{time={int(time.time())}}}\n')
+            except OSError:
+                pass
+            time.sleep(2)
+
     def poll(self):
         if (self.home / 'shutdown.request').exists() and self.stage == 'idle':
             (self.home / 'worker.stopped').write_text('stopped', encoding='utf-8')
             self.root.destroy()
             return
-        atomic_text(self.home / 'heartbeat.lua', f'return {{time={int(time.time())}}}\n')
+        try:
+            self.step()
+        except Exception:
+            # One bad message must never stop the helper: it would miss "render complete" and the teasers.
+            log(self.home, 'helper error:\n' + traceback.format_exc())
+        self.root.after(500, self.poll)
+
+    def step(self):
         while not self.events.empty():
             kind, value = self.events.get_nowait()
             if kind == 'progress':
@@ -347,7 +366,6 @@ class Worker:
         request = read_pref(self.prefs, 'AudioSectionsRequestV2')
         if self.stage == 'idle' and request and request.get('id') != self.seen:
             self.open_editor(request)
-        self.root.after(500, self.poll)
 
 
 def main():

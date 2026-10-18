@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5
+
+- Fix "The Audio Sections helper stopped" while the window is open: the heartbeat Resolve checks is
+  written from its own thread, so an open error dialog or a busy window no longer looks like a crash.
+- Fix missing teasers: an unexpected error in the helper's loop is logged to log.txt instead of
+  silently stopping it, so it still sees "render complete" and makes every teaser.
+- Error dialogs no longer hold up the helper; Resolve's message also shows in the window's status line.
+
 ## 1.4
 
 - The Audio Sections window stays open after Make cuts in Resolve. Load edits from Resolve reads
