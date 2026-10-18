@@ -5,7 +5,8 @@ logs what was posted. Post Helper (a Firefox add-on) shows those clips when you 
 Pornhub. Everything stays on this computer.
 
 Ducky’s Clip Organizer
-  1. Run DuckysClipOrganizer.exe. It opens in your browser at http://127.0.0.1:47833 and keeps running quietly.
+  1. Run DuckysClipOrganizer.exe. It opens in its own window (not your browser, so it stays off a streamed
+     browser). Keep it open, or minimized, while uploading; closing the window quits it.
   2. Add each folder you want managed (nothing is tracked until you add it). Organize renames files in bulk:
        SFW                -> SFW 1, SFW 2... numbered oldest first
        SFW {N} {DATE}     -> keeps each file's own number and date: "take 7 2026-10-05" becomes "SFW 7 10-05-26"
@@ -32,8 +33,10 @@ Post Helper
      planned posts first, then the latest batch, then the whole library.
   3. Pick a clip. A planned post also fills its caption, and a card lists its post time and options.
      Each batch has "Attach all" for upload boxes that take several files.
-  4. Check everything, click the site's own Post button, then "I posted it" on the card. Ducky’s Clip Organizer
-     logs it (if Ducky’s Clip Organizer is closed, the post is logged next time it opens).
+  4. Check everything and click the site's own Post, Publish or Submit button. When the site confirms it, the
+     post is logged by itself and the card shows "Posted". Filling a form or saving a draft never counts.
+     "Mark as posted" is only a backup if a post wasn't caught. (If Ducky’s Clip Organizer is closed, posts
+     are logged the next time it opens.)
   Hold Shift while clicking upload to get the normal file dialog instead.
 
 Presets and auto-fill (RedGifs and Pornhub)

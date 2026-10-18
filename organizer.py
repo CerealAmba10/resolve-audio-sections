@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import random
+import socket
 import subprocess
 import sys
 import threading
@@ -30,13 +31,23 @@ HEADER = 'X-Clip-Organizer'  # sites can't send custom headers here without a CO
 
 
 def folder_dialog():
-    """Native folder picker (works from any thread, unlike Tk)."""
-    script = ("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog;"
-              "$d.Description = 'Choose a clip folder'; $d.UseDescriptionForTitle = $true;"
-              "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }")
-    result = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', script], capture_output=True, text=True,
+    """The modern Windows "Select folder" dialog (address bar, typed paths), on top of everything.
+    It runs in a short-lived copy of this program, so the dialog can never freeze the app."""
+    args = [sys.executable, '--pick-folder'] if getattr(sys, 'frozen', False) else [sys.executable, str(Path(__file__)), '--pick-folder']
+    result = subprocess.run(args, capture_output=True, text=True, encoding='utf-8',
                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     return result.stdout.strip() or None
+
+
+def pick_folder():
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)  # open in front of the app window, not behind it
+    folder = filedialog.askdirectory(parent=root, title='Choose a clip folder', mustexist=True)
+    root.destroy()
+    sys.stdout.write(str(Path(folder)) if folder else '')
 
 
 def version_tuple(text):
@@ -93,6 +104,7 @@ class App:
         self.lock = threading.RLock()
         self.probe = probe
         self.release = None
+        self.window = None  # the app window, once open
         self.helper_seen = None
         self.ffmpeg = 'ready' if ffmpeg_ready() else 'missing'
 
@@ -286,8 +298,23 @@ class App:
                 self.ffmpeg = 'downloading'
                 threading.Thread(target=self.get_ffmpeg, daemon=True).start()
             return dict(ffmpeg=self.ffmpeg)
+        if path == '/api/show':
+            # Opening the app again while it runs: bring this window to the front instead of starting another.
+            if self.window:
+                self.window.restore()
+                self.window.show()
+                self.window.on_top = True
+                self.window.on_top = False
+            return dict(ok=True)
         if path == '/api/quit':
-            threading.Thread(target=lambda: (time.sleep(0.3), server.shutdown()), daemon=True).start()
+            def stop():
+                time.sleep(0.3)
+                server.shutdown()
+                if self.window:
+                    self.window.destroy()  # closes the app window; the program then ends
+                else:
+                    os._exit(0)
+            threading.Thread(target=stop, daemon=True).start()
             return dict(ok=True)
         return None
 
@@ -382,6 +409,12 @@ def make_handler(app):
                 return self.reply(403)
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+                path = urlsplit(self.path).path
+                if path == '/api/folders' and not body.get('path'):
+                    # Wait for the folder dialog without holding the app lock, so the dashboard keeps working.
+                    body['path'] = folder_dialog()
+                    if not body['path']:
+                        return self.send_json({'cancelled': True})
                 with app.lock:
                     data = app.post(urlsplit(self.path).path, body, self.server)
                 return self.send_json(data) if data is not None else self.reply(404)
@@ -406,11 +439,57 @@ def keep_synced(app, every=300):
     threading.Thread(target=loop, daemon=True).start()
 
 
+class Server(ThreadingHTTPServer):
+    # Exclusive port: on Windows, address reuse would let a second copy share the port and answer some requests,
+    # so a second launch must fail to bind and hand over to the running copy instead.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def serve(app, port=PORT):
-    return ThreadingHTTPServer(('127.0.0.1', port), make_handler(app))
+    return Server(('127.0.0.1', port), make_handler(app))
+
+
+def show_running():
+    """Ask the copy that is already running to bring its window forward; open the browser if it can't."""
+    request = urllib.request.Request(f'http://127.0.0.1:{PORT}/api/show', data=b'{}', method='POST',
+                                     headers={HEADER: '1', 'Content-Type': 'application/json'})
+    try:
+        urllib.request.urlopen(request, timeout=5).close()
+    except OSError:
+        webbrowser.open(f'http://127.0.0.1:{PORT}/')
+
+
+def open_window(app):
+    """The dashboard in its own window (Windows' built-in WebView2), not a browser tab, so it never shows up
+    in a streamed browser. Returns False if that isn't available here, and the browser is used instead."""
+    try:
+        import webview
+    except ImportError:
+        return False
+    try:  # its own taskbar entry and icon, even when run from source rather than the packaged exe
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Ducky.ClipOrganizer')
+    except (AttributeError, OSError):
+        pass
+    app.window = webview.create_window("Ducky’s Clip Organizer", f'http://127.0.0.1:{PORT}/', width=1320, height=860,
+                                       min_size=(900, 600), background_color='#1c1a17')
+    try:
+        webview.start(private_mode=False, storage_path=str(library.DATA / 'window'),  # keeps view settings
+                      icon=str(UI / 'icon.ico'))
+    except Exception:  # no WebView2 on this PC
+        app.window = None
+        return False
+    return True
 
 
 def main():
+    if '--pick-folder' in sys.argv:
+        return pick_folder()
     exe = Path(sys.executable)
     if getattr(sys, 'frozen', False) and exe.with_suffix('.old').exists():
         try:
@@ -421,11 +500,14 @@ def main():
         app = App(probe=probe_cached())
         server = serve(app)
     except OSError:
-        webbrowser.open(f'http://127.0.0.1:{PORT}/')  # already running: just show it
-        return
+        return show_running()  # already running: show that window
     keep_synced(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    if open_window(app):
+        server.shutdown()  # window closed: the app quits (Post Helper keeps posts until it's open again)
+        return
     webbrowser.open(f'http://127.0.0.1:{PORT}/')
-    server.serve_forever()
+    threading.Event().wait()  # browser fallback: keep serving until the app is quit from the dashboard
 
 
 def tools_home():

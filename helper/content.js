@@ -95,6 +95,16 @@
   }
 
   browser.runtime.onMessage.addListener(async message => {
+    if (message.type === 'auto-posted' && current) {
+      // The site confirmed the upload: logged already, no button needed.
+      const clip = current.clips.find(c => c.fp === message.fp && !c.posted);
+      if (clip) Object.assign(clip, {posted: true, url: message.url});
+      const done = current.clips.filter(c => c.posted).length;
+      if (done === current.clips.length) stopWatching();
+      renderCard(done === current.clips.length
+        ? `Posted and logged${current.clips.length > 1 ? `: all ${done}` : ''}.`
+        : `${done} of ${current.clips.length} posted and logged so far.`);
+    }
     if (message.type === 'close-picker') closePicker();
     if (message.type === 'browse') {
       closePicker();
@@ -177,10 +187,12 @@
     }
     const planned = current.planned;
     const many = current.clips.length > 1;
+    const posted = current.clips.filter(c => c.posted);
+    const allPosted = posted.length === current.clips.length;
     // FBuddy "Paste texts" format: captions separated by a line containing only ---, in clip order.
     const captions = current.clips.map(c => c.caption || c.name.replace(/\.[^.]+$/, '')).join('\n---\n');
     const presetRow = current.options && current.options.preset && FILLERS[platform] ? [['preset', current.options.preset]] : [];
-    const rows = presetRow.concat(planned ? [['post at', planned.at], ['caption', planned.caption],
+    const rows = allPosted ? posted.filter(c => c.url).map(c => ['posted', c.url]) : presetRow.concat(planned ? [['post at', planned.at], ['caption', planned.caption],
       ...SHOWN.filter(k => planned.options[k] !== undefined && planned.options[k] !== '').map(k => [k.replace('_', ' '), planned.options[k]])]
       : many ? [['captions', `${current.clips.length} captions, in clip order`, captions]] : []);
     cardRoot.innerHTML = `<style>
@@ -199,14 +211,17 @@
       .note { margin-top: 10px; color: #c9c1b6; }
       .auto { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: #c9c1b6; cursor: pointer; }
       .auto input { accent-color: #f0b440; }
+      .small { margin-top: 6px; color: #a69d91; font-size: 12px; }
     </style><div class="card"><div class="title"><span>${esc(many ? `${current.clips.length} clips` : current.clips[0].name)}</span>
       <span>${esc(platform)}</span></div>
       ${rows.map(([k, v, copy]) => `<div class="row"><b>${esc(k)}</b><span>${esc(v)}</span><button data-copy="${esc(copy ?? v)}">Copy</button></div>`).join('')}
-      ${!current.failed && FILLERS[platform] ? `<label class="auto"><input type="checkbox" data-act="auto" ${current.auto ? 'checked' : ''}>
+      ${allPosted ? '' : !current.failed && FILLERS[platform] ? `<label class="auto"><input type="checkbox" data-act="auto" ${current.auto ? 'checked' : ''}>
         Auto-fill each step as it appears</label>` : ''}
-      <div class="actions">${!current.failed && FILLERS[platform] ? '<button data-act="fill">Fill again</button>' : ''}
-        ${current.failed ? '' : `<button class="primary" data-act="posted">${many ? `I posted all ${current.clips.length}` : 'I posted it'}</button>`}
-        <button data-act="dismiss">Not posted</button></div>
+      <div class="actions">${allPosted ? '<button class="primary" data-act="dismiss">Done</button>' : `
+        ${!current.failed && FILLERS[platform] ? '<button data-act="fill">Fill again</button>' : ''}
+        ${current.failed ? '' : `<button data-act="posted" title="Posts are logged by themselves once the site confirms them. Use this only if one wasn't caught.">Mark as posted</button>`}
+        <button data-act="dismiss">Not posted</button>`}</div>
+      ${allPosted || current.failed ? '' : '<div class="small">Logged automatically once the site confirms the post.</div>'}
       <div class="note">${esc(note)}</div></div>`;
     if (!card.isConnected) document.documentElement.appendChild(card);
   }
@@ -227,7 +242,9 @@
       return;
     }
     if (button.dataset.act === 'posted') {
-      const result = await browser.runtime.sendMessage({type: 'posted', platform, fps: current.clips.map(c => c.fp)});
+      // Backup for a post the site didn't confirm in a way Post Helper could see: log only the ones not logged yet.
+      const result = await browser.runtime.sendMessage({type: 'posted', platform,
+                                                        fps: current.clips.filter(c => !c.posted).map(c => c.fp)});
       current = null;
       stopWatching();
       renderCard();

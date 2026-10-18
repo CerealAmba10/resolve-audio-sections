@@ -284,7 +284,7 @@ class PostHelperTests(unittest.TestCase):
         card = "document.getElementById('post-helper-card').shadowRoot"
         captions = self.js(page, f"{card}.querySelector('[data-copy]').dataset.copy")
         self.assertEqual(captions, 'SFW 1\n---\nSFW 2')  # FBuddy "Paste texts" format, in clip order
-        self.assertEqual(self.js(page, f"{card}.querySelector('[data-act=posted]').textContent"), 'I posted all 2')
+        self.assertEqual(self.js(page, f"{card}.querySelector('[data-act=posted]').textContent"), 'Mark as posted')
         self.js(page, f"{card}.querySelector('[data-act=posted]').click()")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and self.app.db.execute('SELECT COUNT(*) FROM posts').fetchone()[0] < 2:
@@ -306,6 +306,9 @@ class PostHelperTests(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and not self.app.db.execute('SELECT 1 FROM site_posts WHERE fp=?', (fp,)).fetchone():
             time.sleep(0.3)
+        self.assert_posted([('Fansly', 'SFW 1.mp4')])  # logged when Fansly confirmed it, no button pressed
+        card = "document.getElementById('post-helper-card').shadowRoot"
+        self.assertIn('Posted and logged', self.js(page, f"{card}.querySelector('.note').textContent"))
         for visit in (1, 2):  # opening the profile again updates the numbers
             self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/profile', wait='complete')
             likes = int(self.wait(page, "document.title.startsWith('seen') && document.title").split()[1])
@@ -346,6 +349,16 @@ class PostHelperTests(unittest.TestCase):
         return self.wait(page, f"!{card}.querySelector('[data-act=fill]')?.disabled && {card}.querySelector('.note').textContent",
                          timeout=40)
 
+    def assert_posted(self, expected):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            rows = [tuple(r) for r in self.app.db.execute(
+                "SELECT p.platform, c.name FROM posts p JOIN clips c ON c.fp=p.fp WHERE p.source='post-helper' ORDER BY c.name")]
+            if len(rows) >= len(expected):
+                break
+            time.sleep(0.3)
+        self.assertEqual(rows, expected)  # each logged exactly once, by the site's confirmation
+
     def links(self):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -373,8 +386,10 @@ class PostHelperTests(unittest.TestCase):
         self.assertFalse(self.js(page, '!!window.published'))  # Publish stays the creator's click
         learned = self.app.get('/api/presets', {})['tags']['RedGifs']
         self.assertEqual((learned['tags'], learned['niches']), (['Anime', 'Hentai', 'POV'], ['Cosplay', 'Rough Sex']))
+        self.assertEqual(self.app.db.execute('SELECT COUNT(*) FROM posts').fetchone()[0], 0)  # filled is not uploaded
         self.js(page, 'publish.click()')
         rows = self.links()
+        self.assert_posted([('RedGifs', 'SFW 2.mp4')])
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][:3], ('RedGifs', 'CheerfulRedPanda', 'https://www.redgifs.com/watch/cheerfulredpanda'))
 
@@ -404,6 +419,10 @@ class PostHelperTests(unittest.TestCase):
         rows = self.links()
         self.assertEqual([(r[0], r[3]) for r in rows], [('Pornhub Shorts', 'SFW 1.mp4'), ('Pornhub Shorts', 'SFW 2.mp4')])
         self.assertTrue(all(r[2] == f'https://www.pornhub.com/view_video.php?viewkey=ph{r[1]}' for r in rows))
+        self.assert_posted([('Pornhub Shorts', 'SFW 1.mp4'), ('Pornhub Shorts', 'SFW 2.mp4')])
+        card = "document.getElementById('post-helper-card').shadowRoot"
+        self.assertIn('Posted and logged: all 2', self.wait(page, f"{card}.querySelector('.note').textContent.includes('all 2') && "
+                                                                  f"{card}.querySelector('.note').textContent"))
 
     def test_redgifs_picker_preset_choice(self):
         pov = library.save_preset(self.app.db, 'RedGifs', 'POV set', {'tags': 'POV', 'audience': 'Gay', 'niches': ''})

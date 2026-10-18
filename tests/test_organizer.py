@@ -103,6 +103,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.call('POST', '/api/presets/delete', {'id': default['id']})[0], 400)  # keep one per site
 
 
+class SingleCopyTests(unittest.TestCase):
+    def test_second_copy_cannot_share_the_port(self):
+        with tempfile.TemporaryDirectory() as home:
+            first, second = organizer.App(Path(home, 'a')), organizer.App(Path(home, 'b'))
+            server = organizer.serve(first, port=0)
+            try:
+                with self.assertRaises(OSError):  # so a second launch shows the running window instead
+                    organizer.serve(second, port=server.server_port)
+            finally:
+                server.server_close()
+                first.db.close()
+                second.db.close()
+
+
 class UpdateTests(unittest.TestCase):
     def test_release_check_and_checksum_guard(self):
         import hashlib

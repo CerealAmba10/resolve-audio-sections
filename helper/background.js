@@ -46,6 +46,8 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
   }
   if (message.type === 'expect-posts') {
     waiting[tab] = message.clips.slice();  // the next posts created on this tab become these clips, in order
+    const site = platformFor(sender.tab.url);
+    if (site) lastTab[site] = tab;
     return true;
   }
   if (message.type === 'close-picker' || message.type === 'browse') {

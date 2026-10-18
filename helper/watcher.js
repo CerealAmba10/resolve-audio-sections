@@ -6,14 +6,17 @@ const WATCH_URLS = ['*://apiv3.fansly.com/api/v1/*'];
 const WATCH_PATH = /\/(timeline|post|stats|account\/me)/i;
 // The reply each site sends when a post is created: which platform, its new ID and (if the site says) its link.
 const CREATES = [
-  {platform: 'Fansly', test: /\/api\/v1\/post\/?$/, id: json => json.response && json.response.id},
+  // Only a confirmed submit or publish counts as uploaded: attaching a clip or saving a draft never does.
+  {platform: 'Fansly', test: /\/api\/v1\/post\/?$/, id: json => json.success !== false && json.response && json.response.id},
   {platform: 'RedGifs', test: /\/v2\/gifs\/submit\/?$/, id: json => json.id,
    url: (id) => `https://www.redgifs.com/watch/${String(id).toLowerCase()}`},
-  {platform: 'Pornhub Shorts', test: /\/uploading\/save_videodata\/?$/, id: json => json.id, url: (id, json) => json.videoUrl},
+  {platform: 'Pornhub Shorts', test: /\/uploading\/save_videodata\/?$/, id: json => json.success !== false && json.id,
+   url: (id, json) => json.videoUrl},
 ];
 const CREATE_URLS = [...WATCH_URLS, '*://*.redgifs.com/*', '*://pornhub.mainhub.com/*'];
 const NOT_COUNTERS = /^(id|type|version|status|price)$|Id$|At$|Ids$/;
 const waiting = {};  // tab id -> clips attached on that tab, waiting for the posts they become (in order)
+const lastTab = {};  // site -> the tab that last attached clips (for posts sent by other add-ons, e.g. FBuddy)
 
 function readJson(details, handle) {
   const filter = browser.webRequest.filterResponseData(details.requestId);
@@ -69,17 +72,24 @@ function shape(value) {
 browser.webRequest.onBeforeRequest.addListener(details => {
   const path = new URL(details.url).pathname;
   const site = details.method === 'POST' && CREATES.find(c => c.test.test(path));
-  if (!site || !waiting[details.tabId] || !waiting[details.tabId].length) return;
+  const tab = details.tabId >= 0 ? details.tabId : lastTab[site && site.platform];
+  if (!site || !waiting[tab] || !waiting[tab].length) return;
   readJson(details, async json => {
     const id = json && site.id(json);
-    const clip = (waiting[details.tabId] || []).shift();
-    if (id == null || !clip) return;
+    if (id == null || id === false) return;  // the site refused it: nothing was uploaded
+    const clip = (waiting[tab] || []).shift();
+    if (!clip) return;
+    const url = site.url ? site.url(id, json) || null : null;
+    const local = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+    // Uploaded: log the post and tell the card on that tab.
+    await queue({path: '/api/posted', body: {platform: site.platform, fp: clip.fp, source: 'post-helper',
+                                            at: local.toISOString().slice(0, 16).replace('T', ' ')}});
+    browser.tabs.sendMessage(tab, {type: 'auto-posted', fp: clip.fp, url}).catch(() => {});
     await inTurn(async () => {
       const {created = []} = await browser.storage.local.get('created');
       await browser.storage.local.set({created: [...created, String(id)].slice(-2000)});
     });
-    await queue({path: '/api/link', body: {platform: site.platform, post_id: String(id), fp: clip.fp,
-                                           url: site.url ? site.url(id, json) || null : null}});
+    await queue({path: '/api/link', body: {platform: site.platform, post_id: String(id), fp: clip.fp, url}});
   });
 }, {urls: CREATE_URLS, types: ['xmlhttprequest']}, ['blocking']);
 
