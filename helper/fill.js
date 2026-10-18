@@ -119,12 +119,25 @@ const FILLERS = {
         if (label) label.click();
       }
       if (tagBoxes[i]) for (const tag of list(options.tags)) await pick(tagBoxes[i], tag, 'li', true);  // typed tags are fine
+      // "Publish to Shorties Only": a custom switch (label + slider around a hidden checkbox).
+      if (typeof options.shorties === 'boolean') {
+        const label = [...document.querySelectorAll('label')].filter(l => same(l.textContent, 'Publish to Shorties Only'))[i];
+        const box = label && (label.closest('v-switch') || label.parentElement.parentElement).querySelector('input[type=checkbox]');
+        if (box && box.checked !== options.shorties) {
+          const slider = box.parentElement.querySelector('.c-switch__slider') || box;
+          slider.click();
+          await pause(150);
+          if (box.checked !== options.shorties) box.click();  // the slider didn't take: use the box itself
+        }
+        if (label && !box) notes.push('Set "Publish to Shorties Only" yourself.');
+      }
       for (const category of list(options.categories)) {
         if (categoryBoxes[i] && !await pick(categoryBoxes[i], category, 'li', false)) missingCategories.add(category);
       }
       if (categoryBoxes[i]) type(categoryBoxes[i], '');
     }
-    notes.push(`Filled ${titles.length} video${titles.length === 1 ? '' : 's'}: title, tags and categories.`);
+    notes.unshift(`Filled ${titles.length} video${titles.length === 1 ? '' : 's'}: title, tags, categories` +
+                  (typeof options.shorties === 'boolean' ? `, Shorties ${options.shorties ? 'on' : 'off'}.` : '.'));
     if (missingCategories.size) notes.push(`Not in Pornhub's category list: ${[...missingCategories].join(', ')}.`);
     if (list(options.tags).length < 2) notes.push('Pornhub needs at least 2 tags.');
     notes.push('Set "When will this be published?" and visibility, tick the certification boxes yourself, then Submit for Review.');

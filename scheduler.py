@@ -26,10 +26,10 @@ DEFAULTS = {
                 'url': 'https://www.redgifs.com/create', 'audience': 'Straight', 'niches': '', 'keep_audio': True,
                 'private': False},
     # Pornhub uploader: the caption is the video title; it needs 2-16 tags and 2-8 categories (from its list).
-    # who: "Performer(s)" or "Solo/Animation".
+    # who: "Performer(s)" or "Solo/Animation". shorties: the "Publish to Shorties Only" switch.
     'Pornhub Shorts': {**COMMON, 'enabled': True, 'max_seconds': 60, 'vertical': True, 'times': '16:00',
                        'caption': '{name}', 'url': 'https://pornhub.mainhub.com/upload/uploader', 'categories': '',
-                       'who': '', 'private': False, 'min_tags': 2, 'min_categories': 2},
+                       'who': '', 'shorties': True, 'private': False, 'min_tags': 2, 'min_categories': 2},
     'Instagram': {**COMMON, 'max_seconds': 180, 'vertical': True, 'nsfw': False, 'times': '18:00',
                   'url': 'https://www.instagram.com/'},
     'TikTok': {**COMMON, 'max_seconds': 600, 'vertical': True, 'nsfw': False, 'times': '17:00',

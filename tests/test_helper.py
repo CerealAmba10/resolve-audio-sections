@@ -93,6 +93,9 @@ function item() {
     '<label><input type="radio" class="solo" name="who' + n + '">Solo/Animation</label></div><input name="title">' +
     '<div><input name="tags"><ul class="tagopts"></ul></div><div class="tagpills"></div>' +
     '<div><input name="category"><ul class="catopts"></ul></div><div class="catpills"></div>' +
+    '<v-switch><div><div><label class="c-input-label noMargin">Publish to Shorties Only</label><div>' +
+    '<input type="checkbox" class="shortie" id="short' + n + '" style="display:none">' +
+    '<label class="c-switch__slider" for="short' + n + '"></label></div></div></div></v-switch>' +
     '<label><input type="checkbox" class="certify">SELECT ALL AND CERTIFY.</label>';
   const tags = d.querySelector('[name=tags]');
   suggest(tags, d.querySelector('.tagopts'), TAGS, '', d.querySelector('.tagpills'));
@@ -105,7 +108,8 @@ submit.onclick = async () => { for (const it of document.querySelectorAll('.item
 </script>"""
 PH_IDS = itertools.count(123)
 SETTINGS = {'RedGifs': dict(tags='Anime, Hentai, NotARealTag', niches='Rough Sex, Cosplay', audience='Animated', private=True),
-            'Pornhub Shorts': dict(tags='Vtuber, my custom tag', categories='Anime, Cosplay, NotACategory', who='Solo/Animation')}
+            'Pornhub Shorts': dict(tags='Vtuber, my custom tag', categories='Anime, Cosplay, NotACategory', who='Solo/Animation',
+                                   shorties=True)}
 
 
 def fake_settings(platforms):
@@ -367,6 +371,8 @@ class PostHelperTests(unittest.TestCase):
                          'Anime,Cosplay|Anime,Cosplay')
         self.assertIn("Not in Pornhub's category list: NotACategory", note)
         self.assertTrue(self.js(page, f"{items}.every(i => i.querySelector('.solo').checked)"))
+        self.assertTrue(self.js(page, f"{items}.every(i => i.querySelector('.shortie').checked)"))  # Shorties switch on
+        self.assertIn('Shorties on', note)
         self.assertFalse(self.js(page, "[...document.querySelectorAll('.certify')].some(c => c.checked)"))  # never ticked for them
         self.js(page, 'submit.click()')
         deadline = time.monotonic() + 10

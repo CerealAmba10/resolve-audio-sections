@@ -386,18 +386,19 @@ function showFfmpeg(status) {
 }
 
 /* Sites: each site's posting settings, used for planning and by Post Helper's "Fill this page". */
-const FIELD_ORDER = ['tags', 'categories', 'niches', 'audience', 'who', 'private', 'caption', 'times', 'clip', 'max_seconds',
+const FIELD_ORDER = ['tags', 'categories', 'niches', 'audience', 'who', 'shorties', 'private', 'caption', 'times', 'clip', 'max_seconds',
                      'max_mb', 'vertical', 'nsfw', 'keep_audio', 'price', 'min_tags', 'min_categories', 'subreddit', 'flair', 'url'];
 const FIELD_HELP = {
   tags: 'Separate with commas. RedGifs and Pornhub pick these on their upload page.',
   categories: "Separate with commas; must match Pornhub's category names. Pornhub needs 2 to 8.",
   niches: 'Separate with commas, as named on RedGifs.', audience: 'Straight, Gay, Lesbian, Trans, Bisexual or Animated.',
-  who: '"Performer(s)" or "Solo/Animation" (Pornhub), or leave empty.', caption: 'Uses {name} (the clip name) and {tags}.',
+  who: '"Performer(s)" or "Solo/Animation" (Pornhub), or leave empty.',
+  shorties: 'Turns on Pornhub\'s "Publish to Shorties Only" switch for each video.', caption: 'Uses {name} (the clip name) and {tags}.',
   times: 'Daily posting times, e.g. 12:00, 20:00.', clip: 'teaser, full or any.', max_seconds: '0 means no limit.',
   max_mb: '0 means no limit.', price: '0 means free.', url: 'The page "Open site" goes to.',
 };
 const FIELD_NAME = {who: 'Who is in it', max_seconds: 'Longest clip (seconds)', max_mb: 'Largest file (MB)', nsfw: 'NSFW',
-                    keep_audio: 'Keep audio', min_tags: 'Fewest tags', min_categories: 'Fewest categories', url: 'Upload page'};
+                    keep_audio: 'Keep audio', shorties: 'Publish to Shorties only', min_tags: 'Fewest tags', min_categories: 'Fewest categories', url: 'Upload page'};
 let siteData = null, site = null;
 
 async function loadSites() {

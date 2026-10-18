@@ -41,7 +41,8 @@ Fill this page (RedGifs and Pornhub)
   RedGifs: after attaching the clip, click "Fill this page" on each step (audience, tags, niches, private), then
     click the site's Next yourself, and Publish on the last step. RedGifs has no scheduling.
   Pornhub: attach one clip or a whole batch, then click "Fill this page": every queued video gets its title, tags
-    (at least 2) and categories (2 to 8, from Pornhub's list). Then set "When will this be published?" and
+    (at least 2), categories (2 to 8, from Pornhub's list) and the "Publish to Shorties Only" switch (on by
+    default; change it under Sites). Then set "When will this be published?" and
     visibility, tick the certification boxes yourself, and click Submit for Review.
   Post Helper never clicks Next, Publish or Submit, and never ticks Pornhub's certification boxes.
   Each new RedGifs and Pornhub post is linked to its clip, with its link, in the clip's details.
