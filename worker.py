@@ -98,31 +98,24 @@ def result_key(result):
 
 
 def pieces_of(timeline):
-    """(start, end) seconds of the enabled items on a timeline's first non-empty track, video first."""
-    fps = d.parse_fps(timeline['fps'])
+    """Clips of a reviewed cuts timeline: enabled items on its first non-empty track (video first), with markers."""
     track = next((t for k in ('video', 'audio') for t in timeline[k] if t['items']), None)
-    return [(float((i['start'] - timeline['start']) / fps), float((i['end'] - timeline['start']) / fps))
-            for i in sorted(track['items'] if track else [], key=lambda i: i['start']) if i.get('enabled', True)]
+    items = [i for i in (track['items'] if track else []) if i.get('enabled', True)]
+    return d.pieces_from(items, timeline.get('markers') or [], int(timeline['start']), d.parse_fps(timeline['fps']))
 
 
-def finish_teasers(batch, cancel, progress):
-    """Cut each teaser from its rendered full clip and check the full clip's length."""
-    fps, output, warnings = Fraction(batch['fps']), Path(batch['output']), []
-    for n, job in enumerate(batch['jobs']):
-        if cancel.is_set():
-            break
-        full = output / (job['name'] + '.mp4')
-        if not full.is_file():
-            raise ValueError(f'Resolve did not produce {full.name}.')
-        frames = frame_count(full)
-        if frames is not None and frames != job['frames']:
-            warnings.append(f"{full.name}: {frames} frames rendered, {job['frames']} expected.")
-        progress(n / len(batch['jobs']), f"Making teaser {job['teaser']}.mp4")
-        make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps, batch['fade'])
-        if batch.get('clip_fade', 0) > 0:     # after the teaser, so the teaser is cut from the unfaded clip
-            progress((n + 0.5) / len(batch['jobs']), f"Fading out {full.name}")
-            fade_out(full, frames or job['frames'], fps, batch['clip_fade'])
-    return warnings
+def finish_clip(batch, job):
+    """Cut one teaser from its rendered full clip, then fade the clip if asked. Returns a warning or None."""
+    fps, output = Fraction(batch['fps']), Path(batch['output'])
+    full = output / (job['name'] + '.mp4')
+    if not full.is_file():
+        raise ValueError(f'Resolve did not produce {full.name}.')
+    frames = frame_count(full)
+    make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps, batch['fade'])
+    if batch.get('clip_fade', 0) > 0:     # after the teaser, so the teaser is cut from the unfaded clip
+        fade_out(full, frames or job['frames'], fps, batch['clip_fade'])
+    if frames is not None and frames != job['frames']:
+        return f"{full.name}: {frames} frames rendered, {job['frames']} expected."
 
 
 class Worker:
@@ -277,22 +270,34 @@ class Worker:
         write_state(self.home, self.request['id'], 'ready', seq=self.seq, action='render', preset=PRESET,
                     output=Path(batch['output']).as_posix(), jobs=jobs, **target)
         self.last_update = time.time()
+        self.teaser_queue, self.teasers_sent, self.teasers_made = queue.Queue(), set(), 0
+        threading.Thread(target=self.make_teasers, args=(batch, self.teaser_queue), daemon=True).start()
         log(self.home, f"render requested: {', '.join(j['name'] for j in jobs)} from "
             f"{batch.get('timeline') or self.request['timeline']['name']} -> {batch['output']}")
         self.show('Rendering your clips', f'Queuing {len(jobs)} clips in Resolve…')
 
-    def teasers(self):
-        log(self.home, 'Resolve finished rendering; making teasers')
-        self.stage = 'teasers'
-        self.show('Making teasers', 'Cutting teasers from the rendered clips…', 0)
-        def work():
-            try:
-                warnings = finish_teasers(self.batch, self.cancel,
-                                          lambda f, m: self.events.put(('progress', (f, m))))
-                self.events.put(('finished', warnings))
-            except Exception as error:
-                self.events.put(('error', str(error)))
-        threading.Thread(target=work, daemon=True).start()
+    def make_teasers(self, batch, jobs):
+        """Teaser worker: cuts each clip's teaser as soon as Resolve reports that clip finished.
+        Gets job names while Resolve renders, then None once rendering is complete."""
+        warnings = []
+        try:
+            while True:
+                name = jobs.get()
+                if name is None:
+                    return self.events.put(('finished', warnings))
+                job = next(j for j in batch['jobs'] if j['name'] == name)
+                self.events.put(('teaser', name))
+                warning = finish_clip(batch, job)
+                warnings += [warning] if warning else []
+                self.events.put(('teaser_done', job['teaser']))
+        except Exception as error:
+            self.events.put(('error', str(error)))
+
+    def queue_teasers(self, names):
+        for name in names:
+            if name not in self.teasers_sent:
+                self.teasers_sent.add(name)
+                self.teaser_queue.put(name)
 
     def beat(self):
         # Resolve's script treats a heartbeat older than 15 s as a dead helper. Writing it from its own thread
@@ -329,7 +334,17 @@ class Worker:
                 # The new setup now asks this idle helper to exit, replaces it and starts the new one.
                 self.stage = 'idle'
                 self.message.set('Installing the update. Audio Sections restarts by itself.')
+            elif kind == 'teaser':
+                log(self.home, f'cutting teaser of {value}')
+            elif kind == 'teaser_done':
+                self.teasers_made += 1
+                if self.stage == 'teasers':
+                    count = len(self.batch['jobs'])
+                    self.progress['value'] = self.teasers_made / count * 100
+                    self.message.set(f'{self.teasers_made} of {count} teasers made…')
             elif kind == 'finished':
+                if self.stage != 'teasers':
+                    continue          # the worker was stopped because Resolve failed; that is already shown
                 count = len(self.batch['jobs'])
                 log(self.home, f"done: {count} clips, teasers {', '.join(j['teaser'] for j in self.batch['jobs'])}"
                     + (f" (warnings: {' '.join(value)})" if value else ''))
@@ -347,14 +362,22 @@ class Worker:
                 self.reply(result)
             elif result['status'] == 'error' and self.stage != 'teasers':
                 log(self.home, f"Resolve error: {result.get('message', '')}")
+                if self.stage == 'rendering':
+                    self.teaser_queue.put(None)     # stop the teaser worker; clips that finished keep their teasers
                 if self.editor:
                     self.editor.close_quietly()
                     self.editor = None
                 self.done('Could not finish', result.get('message', ''))
             elif result['status'] == 'complete' and self.stage == 'rendering' and mine:
-                self.teasers()
+                log(self.home, 'Resolve finished rendering; finishing teasers')
+                self.queue_teasers(j['name'] for j in self.batch['jobs'])
+                self.teaser_queue.put(None)
+                self.stage = 'teasers'
+                count = len(self.batch['jobs'])
+                self.show('Making teasers', f'{self.teasers_made} of {count} teasers made…', self.teasers_made / count * 100)
             elif result['status'] == 'rendering' and self.stage == 'rendering' and mine:
-                self.message.set(result.get('message', ''))
+                self.queue_teasers(result.get('finished') or [])
+                self.message.set(result.get('message', '') + (f' · {self.teasers_made} teasers made' if self.teasers_made else ''))
                 self.progress['value'] = result.get('progress', 0)
         if self.waiting and time.time() - self.waiting > 120 and self.editor:
             self.waiting = None

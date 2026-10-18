@@ -68,6 +68,14 @@ local function helper_alive()
     return ok and value and os.time() - value.time < 15
 end
 
+-- Timeline markers as absolute frames (GetMarkers keys are offsets from the timeline start).
+local function marker_frames(timeline)
+    local frames = {}
+    for offset in pairs(call(timeline, 'GetMarkers') or {}) do frames[#frames + 1] = timeline:GetStartFrame() + offset end
+    table.sort(frames)
+    return frames
+end
+
 -- A timeline's layout: enough for the helper to rebuild each audio track from its source files,
 -- plus a fingerprint so edits made while the helper is open are caught before rendering.
 local function describe(timeline)
@@ -76,7 +84,7 @@ local function describe(timeline)
         fps = settings.timelineFrameRate or timeline:GetSetting('timelineFrameRate'),
         start = timeline:GetStartFrame(), ['end'] = timeline:GetEndFrame(),
         width = settings.timelineResolutionWidth, height = settings.timelineResolutionHeight,
-        audio = {}, video = {}}
+        audio = {}, video = {}, markers = marker_frames(timeline)}
     for _, kind in ipairs({'video', 'audio'}) do
         for index = 1, timeline:GetTrackCount(kind) do
             local track = {index = index, name = call(timeline, 'GetTrackName', kind, index) or '',
@@ -255,6 +263,7 @@ local function run()
                 end
                 prints[state.timeline] = fingerprint(cuts)
                 return {status = 'pieces', timeline = state.timeline, start = cuts:GetStartFrame(), pieces = pieces,
+                    markers = marker_frames(cuts),
                     message = #pieces .. ' pieces on "' .. state.timeline .. '".'}
             end)
             if done then
@@ -309,11 +318,14 @@ local function run()
     announce(id, 'rendering', 0, 'Rendering ' .. #jobs .. ' clips in Resolve')
     while p:IsRenderingInProgress() do
         f:SetPrefs('Global.AudioSectionsHeartbeatV1', os.time())
-        local progress = 0
-        for _, job_id in ipairs(jobs) do
-            progress = progress + (tonumber(p:GetRenderJobStatus(job_id).CompletionPercentage) or 0)
+        local progress, finished = 0, {}
+        for n, job_id in ipairs(jobs) do
+            local status = p:GetRenderJobStatus(job_id)
+            progress = progress + (tonumber(status.CompletionPercentage) or 0)
+            if status.JobStatus == 'Complete' then finished[#finished + 1] = state.jobs[n].name end
         end
-        announce(id, 'rendering', progress / #jobs, 'Rendering ' .. #jobs .. ' clips in Resolve')
+        -- The helper cuts each teaser as soon as its clip appears in 'finished'.
+        announce(id, 'rendering', progress / #jobs, 'Rendering ' .. #jobs .. ' clips in Resolve', {finished = finished})
         local latest = load_state(id)
         if latest and latest.cancel then p:StopRendering(); error('Render stopped.', 0) end
         bmd.wait(1)

@@ -46,7 +46,9 @@ shortcut named **Audio Sections**.
 timeline, "<name> (cuts)", is built with every clip as separate pieces at its original position,
 colored alternately, each clip's video and audio linked so they blade and move together. The
 Audio Sections window stays open. Edit the cuts timeline in Resolve: blade to cut a clip further,
-delete a through edit to merge two pieces, delete a piece to skip it. Then click **Load edits
+delete a through edit to merge two pieces, delete a piece to skip it, and add a timeline marker
+(M, with no clip selected) inside a clip to end that clip's teaser there (no marker: the first
+30 seconds). Then click **Load edits
 from Resolve**: the preview and list show exactly your pieces, and **Render** renders them from
 the cuts timeline. Changing a setting goes back to automatic cuts (Load edits brings yours back);
 **Make cuts in Resolve** again builds a fresh cuts timeline. Running Audio Sections later on a
@@ -90,8 +92,8 @@ to black and silence.
 | First 30 seconds, faded | `name 1T.mp4` |
 
 Every clip, speech or quiet, gets a teaser with the same number: `name 3.mp4` and
-`name 3T.mp4`. Resolve renders the full clips; the helper cuts the teasers from them a few
-seconds after Resolve finishes, so teasers appear in the export folder but not in
+`name 3T.mp4`. Resolve renders the full clips; the helper cuts each teaser from its clip as soon as Resolve
+finishes that clip, while the rest are still rendering, so teasers appear in the export folder but not in
 Resolve's render queue. Each step is written to Documents → Audio Sections Plugin → log.txt.
 
 Numbering continues after the highest number already in the export folder or render

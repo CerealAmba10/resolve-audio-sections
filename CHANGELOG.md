@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6
+
+- A timeline marker inside a clip on the cuts timeline ends that clip's teaser (no marker: first 30 s).
+  The list shows each marked teaser's length and the preview draws it.
+- Teasers are cut as soon as each clip finishes rendering, instead of after the whole batch.
+- The window says when it is showing the pieces of a cuts timeline rather than automatic cuts.
+
 ## 1.5
 
 - Fix "The Audio Sections helper stopped" while the window is open: the heartbeat Resolve checks is

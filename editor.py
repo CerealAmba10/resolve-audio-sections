@@ -56,7 +56,7 @@ class Editor:
         # Review in Resolve: send() talks to the waiting script. `loaded` holds pieces read from a cuts
         # timeline (they replace detection until a setting changes); `target` is where they render from.
         self.send, self.defaults, self.quiet, self.busy = send, defaults or {}, False, False
-        self.loaded = [dict(start=a, end=b) for a, b in pieces] if pieces else None
+        self.loaded = [dict(p) for p in pieces] if pieces else None
         self.cuts_name = request['timeline']['name'] if pieces else None
         self.target = None
         self.view = [0.0, max(self.duration, 1.0)]
@@ -189,6 +189,9 @@ class Editor:
         self.render_button.pack(side='left', padx=(8, 0))
         self.status = tk.StringVar(value='')
         ttk.Label(outer, textvariable=self.status, foreground=COLORS['dim']).grid(row=5, column=0, sticky='w', pady=(6, 0))
+        if self.loaded is not None:
+            self.status.set(f'Showing the {len(self.loaded)} pieces of this cuts timeline as they are in Resolve. '
+                            'Change any setting to cut automatically instead.')
         if self.untrusted:
             self.status.set(f'{self.untrusted} audio item(s) are retimed or report unusual source times; '
                             'their detection may be slightly offset.')
@@ -307,7 +310,9 @@ class Editor:
             length = section['end'] - section['start']
             name = ''
             if section['use'] and section['keep']:
-                name, number = f'{self.stem.get().strip()} {number}  (+ {number}T)', number + 1
+                marked = section.get('teaser_frames')
+                teaser = f', teaser {float(marked / self.fps):.1f} s to marker' if marked else ''
+                name, number = f'{self.stem.get().strip()} {number}  (+ {number}T{teaser})', number + 1
             use = ('✔ quiet' if section.get('quiet') else '✔') if section['use'] and section['keep'] else                 ('too short' if not section['keep'] else '—')
             self.table.insert('', 'end', iid=str(i), values=(use, name, clock(section['start']),
                                                               clock(section['end']), f'{length:.2f} s'),
@@ -380,7 +385,8 @@ class Editor:
             c.create_rectangle(x0, RULER + 3, x1, RULER + CLIP_LANE - 3, fill=color, outline=COLORS['select']
                                if i == self.selected else '', width=2, stipple='' if s['keep'] else 'gray50')
             if s['keep'] and s['use']:
-                teaser = min(s['end'], s['start'] + self.setting('teaser'))
+                marked = s.get('teaser_frames')
+                teaser = s['start'] + float(marked / self.fps) if marked else min(s['end'], s['start'] + self.setting('teaser'))
                 c.create_line(self.x(teaser), RULER + 3, self.x(teaser), RULER + CLIP_LANE - 3, fill=COLORS['bg'], dash=(2, 2))
         for n, track in enumerate(self.tracks):
             top = self.lane_top(n)
@@ -453,6 +459,7 @@ class Editor:
                 s['end'] = min(high, s['start'] + cap, max(s['start'] + 1, seconds))
             s['keep'] = s['end'] - s['start'] > self.setting('min_clip')
             s.pop('frames', None)
+            s.pop('teaser_frames', None)
             s['use'] = s['use'] or s['keep']
             self.edited, self.selected = True, a
             self.refresh_table()
@@ -505,7 +512,8 @@ class Editor:
             base = self.target['start'] if self.target else self.timeline['start']
             jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first,
                              mark_out=base + last, frames=last - first + 1, first=first, last=last,
-                             teaser_frames=min(teaser_frames, last - first + 1),   # short clip: whole clip
+                             # a marker on the cuts timeline ends the teaser; else the setting (short clip: whole clip)
+                             teaser_frames=s.get('teaser_frames') or min(teaser_frames, last - first + 1),
                              start=s['start'], end=s['end']))
             number += 1
         if not jobs:
@@ -553,12 +561,13 @@ class Editor:
                             'to merge, delete a piece to skip it), then click Load edits from Resolve.')
         elif result['status'] == 'pieces':
             start = int(result['start'])
-            self.loaded = [dict(start=float((p['start'] - start) / self.fps), end=float((p['end'] - start) / self.fps),
-                                frames=(int(p['start']) - start, int(p['end']) - start - 1)) for p in result['pieces']]
+            self.loaded = d.pieces_from(result['pieces'], result.get('markers') or [], start, self.fps)
             self.target = dict(name=result['timeline'], start=start)
             self.recompute()
-            self.status.set(f'Loaded {len(self.loaded)} pieces from "{result["timeline"]}". Render will render them '
-                            'from that timeline. Changing a setting goes back to automatic cuts.')
+            marked = sum(1 for p in self.loaded if p['teaser_frames'])
+            self.status.set(f'Loaded {len(self.loaded)} pieces from "{result["timeline"]}"'
+                            + (f', {marked} with a marker ending the teaser' if marked else '')
+                            + '. Render renders them from that timeline. Changing a setting goes back to automatic cuts.')
         else:
             self.status.set('')
             message = result.get('message', 'Resolve could not do that.')

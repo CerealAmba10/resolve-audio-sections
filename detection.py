@@ -213,6 +213,18 @@ def sound_clips(audible, primary, thresholds, duration, min_dead, min_clip, max_
     return split_long(sections, max_length, window, primary, thresholds, min_clip, sound, padding)
 
 
+def pieces_from(items, markers, start, fps):
+    """Clips from a reviewed cuts timeline: one per item (absolute start/end frames, end exclusive).
+    The first marker strictly inside a clip ends its teaser; without one the teaser setting applies."""
+    clips = []
+    for item in sorted(items, key=lambda i: i['start']):
+        a, b = int(item['start']), int(item['end'])
+        mark = next((int(m) for m in sorted(markers) if a < m < b), None)
+        clips.append(dict(start=float((a - start) / fps), end=float((b - start) / fps), frames=(a - start, b - start - 1),
+                          teaser_frames=mark - a if mark is not None else None))
+    return clips
+
+
 def to_frames(start, end, fps):
     """Inclusive frame range covering [start, end) seconds."""
     first = math.floor(Fraction(start).limit_denominator(10**6) * fps)
@@ -289,5 +301,8 @@ if __name__ == '__main__':
     assert all(x <= 180 for x in lengths) and 395 < clips[2]['end'] <= 400.25 and clips[3]['start'] >= 409.75, clips
     for a, b in zip(clips, clips[1:3]):     # 3-minute cuts landed in dead pauses, trimmed to padding
         assert b['start'] - a['end'] >= 0.5 and gated[int(a['end'] / HOP) + 1] == -120.0, (a, b)
+    # Marker at 90100 sits inside the first piece only: that teaser is 100 frames; the second uses the setting.
+    p = pieces_from([dict(start=90240, end=90480), dict(start=90000, end=90240)], [90100, 90240], 90000, Fraction(24))
+    assert [(x['frames'], x['teaser_frames']) for x in p] == [((0, 239), 100), ((240, 479), None)], p
     assert next_number('duck test', ['duck test 1T', 'duck test 3', 'other 9']) == 4
     print('detection ok')
