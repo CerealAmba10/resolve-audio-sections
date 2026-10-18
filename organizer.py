@@ -1,0 +1,388 @@
+"""Clip Organizer: local app serving the library dashboard at http://127.0.0.1:47833 and the clip picker
+data Post Helper uses. Everything stays on this computer; the only outside request is the GitHub
+update check."""
+import hashlib
+import json
+import os
+import random
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+import webbrowser
+from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
+
+import library
+
+VERSION = '1.0.0'
+PORT = 47833
+REPO = 'CerealAmba10/resolve-audio-sections'
+ASSET = 'ClipOrganizer.exe'
+HELPER_SITES = ('Fansly', 'RedGifs', 'Pornhub Shorts')
+UI = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'ui'
+STATIC = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
+          '/app.css': ('app.css', 'text/css'), '/icon.svg': ('icon.svg', 'image/svg+xml')}
+HEADER = 'X-Clip-Organizer'  # sites can't send custom headers here without a CORS preflight, which is refused
+
+
+def folder_dialog():
+    """Native folder picker (works from any thread, unlike Tk)."""
+    script = ("Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+              "$d.Description = 'Choose a clip folder'; $d.UseDescriptionForTitle = $true;"
+              "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }")
+    result = subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', script], capture_output=True, text=True,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    return result.stdout.strip() or None
+
+
+def version_tuple(text):
+    return tuple(int(n) for n in text.lstrip('v').split('.') if n.isdigit())
+
+
+def latest_release():
+    request = urllib.request.Request(f'https://api.github.com/repos/{REPO}/releases/latest',
+                                     headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'ClipOrganizer'})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        release = json.load(response)
+    asset = next((a for a in release.get('assets', []) if a['name'] == ASSET), None)
+    return dict(version=release['tag_name'].lstrip('v'), notes=release.get('body') or '', asset=asset,
+                available=version_tuple(release['tag_name']) > version_tuple(VERSION) and asset is not None)
+
+
+def install_update(release, server):
+    """Download the new exe, check it against GitHub's SHA-256, swap it in and restart."""
+    if not getattr(sys, 'frozen', False):
+        raise ValueError('Updates install into the packaged app only. Use git pull for the source version.')
+    digest = (release['asset'] or {}).get('digest') or ''
+    if not digest.startswith('sha256:'):
+        raise ValueError('This release has no checksum, so it was not installed.')
+    exe = Path(sys.executable)
+    new = exe.with_suffix('.new')
+    request = urllib.request.Request(release['asset']['browser_download_url'], headers={'User-Agent': 'ClipOrganizer'})
+    sha = hashlib.sha256()
+    with urllib.request.urlopen(request, timeout=300) as response, new.open('wb') as out:
+        for block in iter(lambda: response.read(1 << 20), b''):
+            sha.update(block)
+            out.write(block)
+    if sha.hexdigest() != digest.split(':', 1)[1]:
+        new.unlink()
+        raise ValueError('The download did not match its checksum, so it was not installed.')
+    os.replace(exe, exe.with_suffix('.old'))  # a running exe can be renamed, not overwritten
+    os.replace(new, exe)
+
+    def restart():
+        time.sleep(0.5)
+        server.shutdown()
+        server.server_close()
+        subprocess.Popen([str(exe)], creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
+        os._exit(0)
+    threading.Thread(target=restart, daemon=True).start()
+
+
+class App:
+    """State shared by request handlers; one database connection guarded by a lock."""
+
+    def __init__(self, home=library.DATA, probe=None):
+        self.home = Path(home)
+        self.db = library.connect(self.home)
+        self.lock = threading.RLock()
+        self.probe = probe
+        self.release = None
+        self.helper_seen = None
+        self.ffmpeg = 'ready' if ffmpeg_ready() else 'missing'
+
+    def clip_rows(self, folder):
+        used = library.last_used(self.db)
+        counts = {}
+        for row in self.db.execute('SELECT fp, platform, COUNT(*) n, MAX(at) last FROM posts GROUP BY fp, platform'):
+            counts.setdefault(row['fp'], {})[row['platform']] = {'count': row['n'], 'last': row['last']}
+        recent = datetime.now() - timedelta(days=14)
+        rows = []
+        for c in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0 ORDER BY mtime, name', (folder,)):
+            last = used.get(c['fp'])
+            rows.append(dict(fp=c['fp'], name=c['name'], size=c['size'], posts=counts.get(c['fp'], {}),
+                             last=last.strftime(library.FMT) if last else None,
+                             status='fresh' if not last else 'recent' if last > recent else 'rested'))
+        return rows
+
+    def state(self):
+        folders = []
+        for f in self.db.execute('SELECT * FROM folders ORDER BY added'):
+            rows = self.clip_rows(f['path'])
+            folders.append(dict(path=f['path'], name=Path(f['path']).name, prefix=f['prefix'], count=len(rows),
+                                fresh=sum(r['status'] == 'fresh' for r in rows)))
+        seen = self.helper_seen and (datetime.now() - self.helper_seen).total_seconds() < 600
+        return dict(version=VERSION, folders=folders, helper=bool(seen), release=self.release, ffmpeg=self.ffmpeg)
+
+    def detail(self, fp):
+        clip = self.db.execute('SELECT * FROM clips WHERE fp=?', (fp,)).fetchone()
+        if not clip:
+            return None
+        posts = [dict(r) for r in self.db.execute('SELECT platform, at, source FROM posts WHERE fp=? ORDER BY at DESC', (fp,))]
+        batches = [dict(r) for r in self.db.execute("""SELECT b.path, b.created FROM batch_items i JOIN batches b
+            ON b.id=i.batch WHERE i.fp=? ORDER BY b.created DESC""", (fp,))]
+        planned = [dict(r) for r in self.db.execute('SELECT platform, at, done FROM planned WHERE fp=? ORDER BY at', (fp,))]
+        return dict(fp=fp, name=clip['name'], folder=clip['folder'], size=clip['size'], posts=posts, batches=batches,
+                    planned=planned)
+
+    def activity(self):
+        today = datetime.now().date()
+        start = today - timedelta(days=today.weekday() + 7 * 11)
+        weeks = [dict(week=(start + timedelta(weeks=i)).isoformat(), platforms={}) for i in range(12)]
+        for row in self.db.execute('SELECT platform, at FROM posts WHERE at >= ?', (start.isoformat(),)):
+            index = (datetime.strptime(row['at'], library.FMT).date() - start).days // 7
+            if 0 <= index < 12:
+                weeks[index]['platforms'][row['platform']] = weeks[index]['platforms'].get(row['platform'], 0) + 1
+        recent = [dict(r) for r in self.db.execute("""SELECT p.platform, p.at, p.source, c.name, c.fp FROM posts p
+            LEFT JOIN clips c ON c.fp=p.fp ORDER BY p.at DESC LIMIT 40""")]
+        return dict(weeks=weeks, recent=recent)
+
+    def picker(self, platform):
+        """What Post Helper's picker shows on a site: planned posts, the newest batch, then the library."""
+        planned = [dict(r) for r in self.db.execute("""SELECT p.id, p.fp, p.at, p.caption, p.options, c.name FROM planned p
+            JOIN clips c ON c.fp=p.fp WHERE p.platform=? AND p.done=0 ORDER BY p.at LIMIT 40""", (platform,))]
+        for item in planned:
+            item['options'] = json.loads(item['options'] or '{}')
+        batch = self.db.execute('SELECT id, path FROM batches ORDER BY created DESC, id DESC LIMIT 1').fetchone()
+        batch_items = [dict(r) for r in self.db.execute('SELECT fp, name FROM batch_items WHERE batch=?', (batch['id'],))] \
+            if batch else []
+        posted = {r['fp']: r['n'] for r in self.db.execute('SELECT fp, COUNT(*) n FROM posts WHERE platform=? GROUP BY fp',
+                                                           (platform,))}
+        clips = [dict(fp=r['fp'], name=r['name']) for r in self.db.execute(
+            'SELECT fp, name FROM clips WHERE missing=0 ORDER BY mtime DESC LIMIT 200')]
+        for item in planned + batch_items + clips:
+            item['posted'] = posted.get(item['fp'], 0)
+        return dict(platform=platform, planned=planned, batch=dict(name=Path(batch['path']).name if batch else None,
+                                                                   items=batch_items), library=clips)
+
+    def file_path(self, fp):
+        clip = self.db.execute('SELECT folder, name FROM clips WHERE fp=?', (fp,)).fetchone()
+        candidates = [Path(clip['folder']) / clip['name']] if clip else []
+        candidates += [Path(r['path']) / r['name'] for r in self.db.execute(
+            'SELECT b.path, i.name FROM batch_items i JOIN batches b ON b.id=i.batch WHERE i.fp=?', (fp,))]
+        return next((p for p in candidates if p.is_file()), None)
+
+    def preview(self, body):
+        folder = body['folder']
+        clips = [dict(r) for r in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0 ORDER BY mtime, name',
+                                                  (folder,))]
+        rng = random.Random(body.get('seed'))
+        chosen = library.pick(clips, library.last_used(self.db), int(body['count']), datetime.now(),
+                              int(body.get('recent_days', 14)), int(body.get('window', 5)), rng)
+        return clips, chosen
+
+    def post(self, path, body, server):
+        if path == '/api/folders':
+            folder = body.get('path') or folder_dialog()
+            if not folder:
+                return dict(cancelled=True)
+            if not Path(folder).is_dir():
+                raise ValueError('That folder does not exist.')
+            return dict(path=str(Path(folder).resolve()), count=library.scan(self.db, folder))
+        if path == '/api/folders/remove':
+            self.db.execute('DELETE FROM folders WHERE path=?', (body['path'],))
+            self.db.commit()
+            return dict(ok=True)
+        if path == '/api/scan':
+            return dict(count=library.scan(self.db, self.known(body['folder'])))
+        if path == '/api/rename':
+            folder = self.known(body['folder'])
+            plan = library.rename_plan(folder, body['prefix'])
+            if body.get('apply'):
+                library.apply_renames(self.db, folder, plan)
+                self.db.execute('UPDATE folders SET prefix=? WHERE path=?', (body['prefix'].strip(), folder))
+                self.db.commit()
+            return dict(plan=plan, applied=bool(body.get('apply')))
+        if path == '/api/batch/preview':
+            self.known(body['folder'])
+            clips, chosen = self.preview(body)
+            return dict(total=len(clips), chosen=[dict(fp=c['fp'], name=c['name'], reason=r) for c, r in chosen])
+        if path == '/api/batch':
+            folder = self.known(body['folder'])
+            names = set(body['names'])
+            clips = [dict(r) for r in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0', (folder,))]
+            chosen = [(c, '') for c in clips if c['name'] in names]
+            batch, target = library.make_batch(self.db, folder, chosen, datetime.now(), body.get('name') or None)
+            platforms = [p for p in body.get('platforms', []) if p in HELPER_SITES]
+            items, skipped = library.helper_batch(self.db, batch, target, platforms, datetime.now(), self.probe) \
+                if platforms else ([], [])
+            return dict(path=str(target), name=target.name, copied=len(chosen), planned=len(items), skipped=skipped)
+        if path == '/api/posted':
+            self.helper_seen = datetime.now() if body.get('source') == 'post-helper' else self.helper_seen
+            ok = library.record_post(self.db, body['platform'], name=body.get('name'), fp=body.get('fp'),
+                                     at=body.get('at'), source=body.get('source', 'manual'))
+            return dict(ok=ok)
+        if path == '/api/open':
+            target = Path(body['path'])
+            known = {r[0] for r in self.db.execute('SELECT path FROM folders UNION SELECT path FROM batches')}
+            if str(target) not in known:
+                raise ValueError('Only library and batch folders can be opened.')
+            os.startfile(target)
+            return dict(ok=True)
+        if path == '/api/update':
+            self.release = latest_release()
+            if body.get('install') and self.release['available']:
+                install_update(self.release, server)
+                return dict(installing=True)
+            return self.release
+        if path == '/api/ffmpeg':
+            if self.ffmpeg in ('missing', 'error'):
+                self.ffmpeg = 'downloading'
+                threading.Thread(target=self.get_ffmpeg, daemon=True).start()
+            return dict(ffmpeg=self.ffmpeg)
+        if path == '/api/quit':
+            threading.Thread(target=lambda: (time.sleep(0.3), server.shutdown()), daemon=True).start()
+            return dict(ok=True)
+        return None
+
+    def get_ffmpeg(self):
+        from ffmpeg_tools import ensure_tools
+        try:
+            ensure_tools(tools_home())  # finds an installed FFmpeg, or downloads a pinned, checksum-verified build once
+            self.ffmpeg = 'ready'
+        except (OSError, ValueError, subprocess.SubprocessError):
+            self.ffmpeg = 'error'
+
+    def known(self, folder):
+        if not self.db.execute('SELECT 1 FROM folders WHERE path=?', (folder,)).fetchone():
+            raise ValueError('Add that folder to the library first.')
+        return folder
+
+    def get(self, path, query):
+        if path == '/api/state':
+            return self.state()
+        if path == '/api/clips':
+            return self.clip_rows(query.get('folder', [''])[0])
+        if path.startswith('/api/clip/'):
+            return self.detail(path.rsplit('/', 1)[1])
+        if path == '/api/activity':
+            return self.activity()
+        if path == '/api/helper/clips':
+            self.helper_seen = datetime.now()
+            return self.picker(query.get('platform', [''])[0])
+        return None
+
+
+def make_handler(app):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def allowed(self):
+            # Refuse other hostnames (DNS rebinding) and anything without our header (cross-site requests).
+            host_ok = self.headers.get('Host', '') in (f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}')
+            return host_ok and self.headers.get(HEADER) == '1'
+
+        def reply(self, status, body=b'', kind='application/json'):
+            self.send_response(status)
+            self.send_header('Content-Type', kind)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def send_json(self, data, status=200):
+            self.reply(status, json.dumps(data).encode())
+
+        def do_GET(self):
+            url = urlsplit(self.path)
+            path = unquote(url.path)
+            if self.headers.get('Host', '') not in (f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'):
+                return self.reply(403)
+            if path in STATIC:
+                name, kind = STATIC[path]
+                return self.reply(200, (UI / name).read_bytes(), kind + '; charset=utf-8')
+            if path.startswith('/thumb/') and path.endswith('.jpg'):
+                fp = path[7:-4]
+                with app.lock:
+                    source = app.file_path(fp)
+                thumb = source and library.thumbnail(fp, source, app.home / 'thumbs')
+                return self.reply(200, thumb.read_bytes(), 'image/jpeg') if thumb else self.reply(404)
+            if not self.allowed():
+                return self.reply(403)
+            if path.startswith('/file/'):
+                with app.lock:
+                    source = app.file_path(path[6:])
+                if not source:
+                    return self.reply(404)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Length', str(source.stat().st_size))
+                self.end_headers()
+                with source.open('rb') as f:
+                    while block := f.read(1 << 20):
+                        self.wfile.write(block)
+                return
+            with app.lock:
+                data = app.get(path, parse_qs(url.query))
+            return self.send_json(data) if data is not None else self.reply(404)
+
+        def do_POST(self):
+            if not self.allowed():
+                return self.reply(403)
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+                with app.lock:
+                    data = app.post(urlsplit(self.path).path, body, self.server)
+                return self.send_json(data) if data is not None else self.reply(404)
+            except (ValueError, KeyError, OSError) as error:
+                return self.send_json({'error': str(error)}, 400)
+
+    return Handler
+
+
+def serve(app, port=PORT):
+    return ThreadingHTTPServer(('127.0.0.1', port), make_handler(app))
+
+
+def main():
+    exe = Path(sys.executable)
+    if getattr(sys, 'frozen', False) and exe.with_suffix('.old').exists():
+        try:
+            exe.with_suffix('.old').unlink()  # left over from the last update
+        except OSError:
+            pass
+    try:
+        server = serve(App(probe=probe_cached()))
+    except OSError:
+        webbrowser.open(f'http://127.0.0.1:{PORT}/')  # already running: just show it
+        return
+    webbrowser.open(f'http://127.0.0.1:{PORT}/')
+    server.serve_forever()
+
+
+def tools_home():
+    return Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+
+
+def ffmpeg_ready():
+    from ffmpeg_tools import tool_path
+    try:
+        return all(tool_path(name, tools_home()) for name in ('ffmpeg', 'ffprobe'))
+    except ValueError:
+        return False
+
+
+def probe_cached():
+    from scheduler import probe_media
+    cache = {}
+
+    def probe(path):
+        if path not in cache:
+            if not ffmpeg_ready():
+                # ponytail: without FFmpeg, length/shape checks are skipped rather than blocking every clip.
+                return dict(duration=0, width=0, height=1)
+            try:
+                cache[path] = probe_media(path)
+            except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError):
+                cache[path] = None
+        return cache[path]
+    return probe
+
+
+if __name__ == '__main__':
+    main()

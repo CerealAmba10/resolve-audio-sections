@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Choose a clip</title>
+<link rel="stylesheet" href="picker.css">
+<body>
+<header>
+  <div>
+    <h1 id="heading">Choose a clip</h1>
+    <p id="sub">From Clip Organizer on this computer</p>
+  </div>
+  <input type="search" id="search" placeholder="Search clips" aria-label="Search clips">
+  <button class="close" id="close" aria-label="Close">✕</button>
+</header>
+<main id="body">
+  <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+</main>
+<footer>
+  <button class="ghost" id="browse">Browse this computer…</button>
+  <span id="hint">Tip: hold Shift when clicking upload to skip this picker.</span>
+  <button class="primary" id="attach" disabled>Attach</button>
+</footer>
+<script src="store.js"></script>
+<script src="picker.js"></script>
+</body>
+</html>

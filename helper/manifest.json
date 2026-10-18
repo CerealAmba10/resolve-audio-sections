@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Post Helper",
-  "version": "1.0",
-  "description": "Fills planned posts into Fansly, RedGifs and Pornhub's own post forms, and keeps a private history of your Fansly stats. You click Post yourself. Nothing is sent anywhere else.",
+  "version": "2.0",
+  "description": "Opens your Clip Organizer clips when you upload on Fansly, RedGifs or Pornhub, fills the caption, and logs what you post. You click Post yourself. Nothing leaves your computer.",
   "browser_specific_settings": {
     "gecko": {
       "id": "post-helper@audio-sections",
@@ -12,11 +12,11 @@
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "tabs",
     "clipboardWrite",
     "webRequest",
     "webRequestBlocking",
-    "*://*.fansly.com/*"
+    "*://*.fansly.com/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
     "scripts": [
@@ -34,12 +34,16 @@
         "*://*.pornhub.com/*"
       ],
       "js": [
+        "sites.js",
         "content.js"
       ],
       "run_at": "document_idle"
     }
   ],
   "browser_action": {
-    "default_title": "Post Helper: import and manage batches"
-  }
+    "default_title": "Post Helper"
+  },
+  "web_accessible_resources": [
+    "picker.html"
+  ]
 }

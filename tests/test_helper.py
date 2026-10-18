@@ -7,8 +7,8 @@ import time
 import unittest
 from pathlib import Path
 
+import organizer
 from firefox_bidi import find_firefox, launch
-from scheduler import DEFAULTS, stage
 
 try:
     find_firefox()
@@ -17,20 +17,18 @@ except RuntimeError:
     FIREFOX = False
 
 EXTENSION = Path(__file__).resolve().parent.parent / 'helper'
-# Stand-in post forms: a plain textarea, and a rich-text editor (contenteditable).
-FORM = (b'<input type="file" id="up" accept="video/*" style="display:none"><button id="post">Post</button>'
-        b'<script>up.onchange = async () => document.title = "got " + up.files[0].name + " " +'
-        b' (await up.files[0].text()); post.onclick = () => window.posted = true;</script>')
-PAGES = {'/compose': FORM + b'<textarea id="cap" style="width:400px;height:100px"></textarea>',
-         '/compose-rich': FORM + b'<div id="cap" contenteditable="true" style="width:400px;height:100px"></div>'}
-SERVED = {}  # /files/<n> -> exported file, so the import page can be handed the same files a person picks
-VIEWS = iter(range(100, 10000, 25))  # a stats value that grows between visits
+# Stand-in post form: a site button that clicks a hidden file input, like the real sites do.
+FORM = (b'<input type="file" id="up" accept="video/*" style="display:none"><button id="pick">Upload</button>'
+        b'<button id="post">Post</button><textarea id="cap" style="width:400px;height:100px"></textarea>'
+        b'<script>pick.onclick = () => up.click(); up.onchange = async () => document.title = "got " +'
+        b' up.files[0].name + " " + (await up.files[0].text()); post.onclick = () => window.posted = true;</script>')
+VIEWS = iter(range(100, 10000, 25))
 STATS_PAGE = (b'<script>(async () => { const r = await fetch("/api/v1/account/stats/412345678901234567?days=7");'
               b' const m = await fetch("/api/v1/messages/stats"); document.title = "views " + (await r.json()).response.views;'
               b' })()</script>')
 
 
-class Handler(http.server.BaseHTTPRequestHandler):
+class Site(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         if self.path.startswith('/api/v1/'):
@@ -38,20 +36,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             secret = 'DM-SECRET' if 'messages' in self.path else ''
             self.wfile.write(json.dumps({'success': True, 'response': {
-                'views': 0 if secret else next(VIEWS), 'tips': 5, 'accountId': '412345678901234567', 'createdAt': 1, 'note': secret}}).encode())
-            return
-        if self.path == '/stats-page':
-            self.end_headers()
-            self.wfile.write(STATS_PAGE)
-            return
-        if self.path in SERVED:
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(SERVED[self.path].read_bytes())
+                'views': 0 if secret else next(VIEWS), 'tips': 5, 'note': secret}}).encode())
             return
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
-        self.wfile.write(b'<!doctype html><body>' + PAGES.get(self.path, b''))
+        self.wfile.write(b'<!doctype html><body>' + (STATS_PAGE if self.path == '/stats-page' else FORM))
 
     def log_message(self, *args):
         pass
@@ -59,123 +48,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 @unittest.skipIf(not FIREFOX, 'Firefox not installed')
 class PostHelperTests(unittest.TestCase):
-    def test_import_batch_fill_forms_and_advance(self):
-        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f'http://127.0.0.1:{server.server_port}'
-        with tempfile.TemporaryDirectory() as folder:
-            folder = Path(folder)
-            for name, data in (('rec 1.mp4', b'CLIP-ONE'), ('rec 2.mp4', b'CLIP-TWO'), ('rec 1T.mp4', b'TEASER')):
-                (folder / name).write_bytes(data)
-            options = json.dumps(DEFAULTS['Fansly'])
-            exported = stage([
-                dict(platform='Fansly', file=str(folder / 'rec 2.mp4'), at='2026-01-02 20:00', caption='Second', options=options),
-                dict(platform='Fansly', file=str(folder / 'rec 1.mp4'), at='2026-01-02 12:00', caption='First <b>&', options=options),
-                dict(platform='TikTok', file=str(folder / 'rec 1T.mp4'), at='2026-01-02 17:00', caption='T',
-                     options=json.dumps(DEFAULTS['TikTok']))], folder / 'batches')
-            process, bidi, panel = self.start(folder)
-            run, wait = self.js, self.wait
-            try:
-                # Automation can't use the file picker on extension pages, so hand the import input the same
-                # files a person would select, then let the page's real import handler run.
-                chosen = [p for p in exported['Fansly'].iterdir()] + [exported['TikTok'] / 'batch.json']
-                SERVED.update({f'/files/{i}': path for i, path in enumerate(chosen)})
-                listing = json.dumps([[base + f'/files/{i}', path.name] for i, path in enumerate(chosen)])
-                run(panel, f"""(async () => {{
-                    const transfer = new DataTransfer();
-                    for (const [url, name] of {listing}) transfer.items.add(new File([await (await fetch(url)).blob()], name));
-                    const input = document.getElementById('import');
-                    input.files = transfer.files;
-                    input.dispatchEvent(new Event('change'));
-                }})()""")
-                message = wait(panel, "document.getElementById('message').textContent")
-                self.assertIn('Imported 2 posts', message)
-                self.assertIn('TikTok posts are uploaded by hand', message)
-
-                page = bidi.call('browsingContext.create', type='tab')['context']
-                card = "document.getElementById('post-helper-card')?.shadowRoot"
-                bidi.call('browsingContext.navigate', context=page, url=base + '/compose', wait='complete')
-                text = wait(page, f"{card}?.textContent")
-                self.assertIn('1 of 2', text)
-                self.assertIn('rec 1.mp4', text)  # earliest planned time first
-                self.assertIn('First <b>&', text)  # shown as text, never as page markup
-                self.assertIn('subscribers', text)  # launch options listed
-                run(page, f"{card}.querySelector('[data-act=fill]').click()")
-                self.assertEqual(wait(page, "document.title.startsWith('got') && document.title"), 'got rec 1.mp4 CLIP-ONE')
-                self.assertEqual(run(page, 'cap.value'), 'First <b>&')
-                self.assertIn('Clip attached. Caption filled.', run(page, f"{card}.querySelector('.note').textContent"))
-                self.assertFalse(run(page, '!!window.posted'))  # the creator clicks Post, never the helper
-                run(page, f"{card}.querySelector('[data-act=posted]').click()")
-                self.assertIn('2 of 2', wait(page, f"{card}.textContent.includes('2 of 2') && {card}.textContent"))
-
-                bidi.call('browsingContext.navigate', context=page, url=base + '/compose-rich', wait='complete')
-                wait(page, f"{card}?.textContent.includes('rec 2.mp4')")
-                run(page, f"{card}.querySelector('[data-act=fill]').click()")
-                self.assertEqual(wait(page, "document.title.startsWith('got') && document.title"), 'got rec 2.mp4 CLIP-TWO')
-                self.assertEqual(run(page, 'cap.innerText'), 'Second')
-                run(page, f"{card}.querySelector('[data-act=posted]').click()")
-                wait(page, "!document.getElementById('post-helper-card')")  # batch finished: card goes away
-                statuses = run(panel, "browser.storage.local.get('posts').then(r => r.posts.map(p => p.status).join())")
-                self.assertEqual(statuses, 'posted,posted')
-            finally:
-                bidi.sock.close()
-                process.kill()
-                process.wait()
-                server.shutdown()
-                server.server_close()
-
-    def test_saves_fansly_stats_quietly_and_never_messages(self):
-        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f'http://127.0.0.1:{server.server_port}'
-        with tempfile.TemporaryDirectory() as folder:
-            process, bidi, panel = self.start(Path(folder))
-            run, wait = self.js, self.wait
-            try:
-                page = bidi.call('browsingContext.create', type='tab')['context']
-                seen = []
-                for _ in range(3):  # three visits to the stats page on different days
-                    bidi.call('browsingContext.navigate', context=page, url=base + '/stats-page', wait='complete')
-                    seen.append(wait(page, "document.title.startsWith('views') && document.title"))
-                    time.sleep(0.5)
-                self.assertEqual(len(set(seen)), 3)  # the page still gets each real response
-                saved = json.loads(wait(panel, "stats('readonly', s => s.getAll()).then(a => a.length === 3 && JSON.stringify(a))"))
-                self.assertEqual({s['path'] for s in saved}, {'/api/v1/account/stats/{id}'})  # DMs are never saved
-                self.assertEqual([s['data']['response']['views'] for s in saved],
-                                 sorted(int(t.split()[1]) for t in seen))  # one reading per visit, in order
-                shapes = run(panel, "JSON.stringify(shape({response: {views: 9, '4123': {name: 'Fan'}}, list: [{tips: 1}]}))")
-                self.assertEqual(json.loads(shapes), {'response': {'views': 'number', '{id}': {'name': 'string'}},
-                                                      'list': [{'tips': 'number'}]})  # keys and types only
-            finally:
-                bidi.sock.close()
-                process.kill()
-                process.wait()
-                server.shutdown()
-                server.server_close()
-
-    def start(self, folder):
-        # Test copy: the local server stands in for fansly.com and its API.
-        ext = folder / 'ext'
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        clips = root / 'clips'
+        clips.mkdir()
+        for name, data in (('SFW 1.mp4', b'CLIP-ONE'), ('SFW 2.mp4', b'CLIP-TWO')):
+            (clips / name).write_bytes(data)
+        # Clip Organizer with one batch planned for Fansly.
+        self.app = organizer.App(root / 'data', probe=lambda p: dict(duration=30, width=1080, height=1920))
+        folder = self.app.post('/api/folders', {'path': str(clips)}, None)['path']
+        self.app.post('/api/batch', {'folder': folder, 'names': ['SFW 1.mp4', 'SFW 2.mp4'], 'platforms': ['Fansly']}, None)
+        self.servers = [organizer.serve(self.app, port=0), http.server.ThreadingHTTPServer(('127.0.0.1', 0), Site)]
+        for server in self.servers:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.site = f'http://127.0.0.1:{self.servers[1].server_port}'
+        # Test copy of the extension: the local site stands in for fansly.com, the test app for port 47833.
+        ext = root / 'ext'
         shutil.copytree(EXTENSION, ext)
         manifest = json.loads((ext / 'manifest.json').read_text())
         manifest['content_scripts'][0]['matches'].append('http://127.0.0.1/*')
-        manifest['permissions'].append('http://127.0.0.1/*')
         (ext / 'manifest.json').write_text(json.dumps(manifest))
-        sites = ext / 'sites.js'
-        sites.write_text(sites.read_text().replace("'Fansly': 'fansly.com'", "'Fansly': '127.0.0.1'"))
-        capture = ext / 'stats-capture.js'
-        capture.write_text(capture.read_text().replace("['*://apiv3.fansly.com/api/v1/*']", "['http://127.0.0.1/api/v1/*']"))
-        process, bidi = launch(folder / 'profile')
-        self.bidi = bidi
-        bidi.call('webExtension.install', extensionData={'type': 'path', 'path': str(ext)})
+        for name, old, new in (('sites.js', "'Fansly': 'fansly.com'", "'Fansly': '127.0.0.1'"),
+                               ('store.js', 'http://127.0.0.1:47833', f'http://127.0.0.1:{self.servers[0].server_port}'),
+                               ('stats-capture.js', "['*://apiv3.fansly.com/api/v1/*']", "['http://127.0.0.1/api/v1/*']")):
+            (ext / name).write_text((ext / name).read_text().replace(old, new))
+        self.process, self.bidi = launch(root / 'profile')
+        self.bidi.call('webExtension.install', extensionData={'type': 'path', 'path': str(ext)})
         time.sleep(1.5)
-        panel = next(c['context'] for c in bidi.call('browsingContext.getTree')['contexts'] if c['url'].endswith('/helper.html'))
-        return process, bidi, panel
+        self.panel = self.context('/helper.html')
+
+    def tearDown(self):
+        self.bidi.sock.close()
+        self.process.kill()
+        self.process.wait()
+        for server in self.servers:
+            server.shutdown()
+            server.server_close()
+        self.app.db.close()
+        self.temp.cleanup()
+
+    def contexts(self, tree=None):
+        for c in tree if tree is not None else self.bidi.call('browsingContext.getTree')['contexts']:
+            yield c
+            yield from self.contexts(c.get('children') or [])
+
+    def context(self, suffix, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            found = [c['context'] for c in self.contexts() if c['url'].split('?')[0].endswith(suffix)]
+            if found:
+                return found[0]
+            time.sleep(0.3)
+        self.fail('no page ' + suffix)
 
     def js(self, context, code):
         result = self.bidi.call('script.evaluate', expression=code, target={'context': context}, awaitPromise=True,
-                                resultOwnership='root')['result']
-        return result if result.get('type') == 'node' else result.get('value')
+                                resultOwnership='root')
+        if 'result' not in result:
+            raise AssertionError(result.get('exceptionDetails', result))
+        return result['result'].get('value')
 
     def wait(self, context, code, timeout=10):
         deadline = time.monotonic() + timeout
@@ -185,6 +117,45 @@ class PostHelperTests(unittest.TestCase):
                 return value
             time.sleep(0.3)
         self.fail('timed out waiting for: ' + code)
+
+    def test_upload_click_opens_picker_and_planned_clip_fills_the_form(self):
+        self.assertIn('Connected', self.wait(self.panel, "document.getElementById('status').classList.contains('on') && "
+                                                         "document.getElementById('status').textContent"))
+        page = self.bidi.call('browsingContext.create', type='tab')['context']
+        self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/compose', wait='complete')
+        time.sleep(0.5)
+        self.js(page, 'pick.click()')  # the site's own upload button
+        picker = self.context('/picker.html')
+        tiles = self.wait(picker, "document.querySelectorAll('.tile').length >= 2 && document.getElementById('body').innerText")
+        self.assertIn('Planned for Fansly', tiles)
+        self.assertIn('Latest batch', tiles)
+        self.js(picker, "document.querySelector('.tile').click()")  # first planned post
+        self.assertEqual(self.wait(page, "document.title.startsWith('got') && document.title"), 'got SFW 1.mp4 CLIP-ONE')
+        self.assertEqual(self.js(page, 'cap.value'), 'SFW 1')  # caption from the planner template
+        card = "document.getElementById('post-helper-card').shadowRoot"
+        self.assertIn('Caption filled', self.js(page, f"{card}.querySelector('.note').textContent"))
+        self.assertFalse(self.js(page, '!!window.posted'))  # Post is always the creator's click
+        self.js(page, f"{card}.querySelector('[data-act=posted]').click()")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not self.app.db.execute('SELECT COUNT(*) FROM posts').fetchone()[0]:
+            time.sleep(0.3)
+        post = self.app.db.execute('SELECT p.platform, p.source, c.name FROM posts p JOIN clips c ON c.fp=p.fp').fetchone()
+        self.assertEqual(tuple(post), ('Fansly', 'post-helper', 'SFW 1.mp4'))
+        self.assertEqual(len(self.app.picker('Fansly')['planned']), 1)  # that plan is done
+
+    def test_saves_fansly_stats_quietly_and_never_messages(self):
+        page = self.bidi.call('browsingContext.create', type='tab')['context']
+        seen = []
+        for _ in range(3):  # three visits to the stats page on different days
+            self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/stats-page', wait='complete')
+            seen.append(self.wait(page, "document.title.startsWith('views') && document.title"))
+            time.sleep(0.5)
+        self.assertEqual(len(set(seen)), 3)  # the page still gets each real response
+        saved = json.loads(self.wait(self.panel, "stats('readonly', s => s.getAll()).then(a => a.length === 3 && JSON.stringify(a))"))
+        self.assertEqual({s['path'] for s in saved}, {'/api/v1/account/stats/{id}'})  # DMs are never saved
+        shapes = self.js(self.panel, "JSON.stringify(shape({response: {views: 9, '4123': {name: 'Fan'}}, list: [{tips: 1}]}))")
+        self.assertEqual(json.loads(shapes), {'response': {'views': 'number', '{id}': {'name': 'string'}},
+                                              'list': [{'tips': 'number'}]})  # keys and types only
 
 
 if __name__ == '__main__':

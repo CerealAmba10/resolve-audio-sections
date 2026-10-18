@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip Organizer</title>
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><img src="/icon.svg" alt="" width="28" height="28"><span>Clip Organizer</span></div>
+    <nav class="nav" aria-label="Views">
+      <a href="#library" data-view="library">Library</a>
+      <a href="#organize" data-view="organize">Organize</a>
+      <a href="#batch" data-view="batch">Batch</a>
+      <a href="#activity" data-view="activity">Activity</a>
+    </nav>
+    <div class="folders">
+      <div class="folders-head"><span>Folders</span><button class="ghost small" id="add-folder">Add</button></div>
+      <ul id="folder-list"></ul>
+    </div>
+    <footer class="sidebar-foot">
+      <div class="helper-status" id="helper-status"><span class="dot"></span><span>Post Helper</span></div>
+      <div class="update" id="update"><span id="version"></span><button class="link" id="check-update">Check for updates</button></div>
+    </footer>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="title-block">
+        <h1 id="title">Library</h1>
+        <button class="path link" id="folder-path" title="Open in File Explorer"></button>
+      </div>
+      <div class="top-actions" id="top-actions"></div>
+    </header>
+
+    <div class="banner" id="ffmpeg-banner" hidden>
+      <span id="ffmpeg-text">Thumbnails and site length checks need FFmpeg, a free video tool (about 90 MB, downloaded once and checksum-verified).</span>
+      <button class="ghost" id="get-ffmpeg">Download FFmpeg</button>
+    </div>
+
+    <section class="view" id="view-welcome" hidden>
+      <div class="welcome">
+        <h2>Start with a clip folder</h2>
+        <p>Pick the folder your exports land in. Clip Organizer tracks every file in it by content, so renaming or
+          copying a clip never loses its posting history.</p>
+        <button class="primary" id="welcome-add">Choose folder</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-library" hidden>
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search clips" aria-label="Search clips">
+        <div class="segmented" role="radiogroup" aria-label="Filter by status" id="status-filter">
+          <button role="radio" data-status="" aria-checked="true">All</button>
+          <button role="radio" data-status="fresh" aria-checked="false">Never posted</button>
+          <button role="radio" data-status="rested" aria-checked="false">Rested</button>
+          <button role="radio" data-status="recent" aria-checked="false">Recent</button>
+        </div>
+        <span class="summary" id="library-summary"></span>
+      </div>
+      <div class="split">
+        <div class="table-wrap">
+          <table class="clips">
+            <thead><tr><th class="thumb-col"></th><th>Clip</th><th>Status</th><th>Posted</th><th class="num">Last used</th></tr></thead>
+            <tbody id="clip-rows"></tbody>
+          </table>
+          <p class="empty" id="library-empty" hidden></p>
+        </div>
+        <aside class="detail" id="detail" hidden></aside>
+      </div>
+    </section>
+
+    <section class="view" id="view-organize" hidden>
+      <div class="form-row">
+        <label class="field"><span>Rename everything to</span>
+          <input id="prefix" placeholder="SFW" autocomplete="off" spellcheck="false"></label>
+        <p class="hint" id="prefix-example">Files become "SFW 1", "SFW 2"… oldest first. Files already numbered keep their number.</p>
+      </div>
+      <div class="rename-preview" id="rename-preview"></div>
+      <div class="actions"><button class="primary" id="apply-rename" disabled>Rename files</button></div>
+    </section>
+
+    <section class="view" id="view-batch" hidden>
+      <div class="batch-controls">
+        <label class="field"><span>Clips</span><input type="number" id="count" min="1" max="1000" value="20"></label>
+        <label class="field"><span>Skip clips used in the last</span>
+          <span class="with-unit"><input type="number" id="recent" min="0" max="365" value="14"><em>days</em></span></label>
+        <label class="field"><span>Variety</span>
+          <span class="with-unit"><input type="number" id="window" min="1" max="50" value="5"><em>oldest to pick from</em></span></label>
+        <label class="field"><span>Batch folder</span><input id="batch-name" autocomplete="off"></label>
+      </div>
+      <fieldset class="platforms">
+        <legend>Also plan posts for Post Helper</legend>
+        <label><input type="checkbox" value="Fansly"> <i class="swatch p1"></i>Fansly</label>
+        <label><input type="checkbox" value="RedGifs"> <i class="swatch p2"></i>RedGifs</label>
+        <label><input type="checkbox" value="Pornhub Shorts"> <i class="swatch p3"></i>Pornhub Shorts</label>
+      </fieldset>
+      <div class="batch-head">
+        <p class="rules">Never-posted clips first, then the longest-rested, picked with a little variety, never anything recent.</p>
+        <button class="ghost" id="reshuffle">Reshuffle</button>
+      </div>
+      <ol class="batch-list" id="batch-list"></ol>
+      <div class="actions sticky">
+        <span id="batch-summary"></span>
+        <button class="primary" id="create-batch" disabled>Create batch</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-activity" hidden>
+      <div class="chart-card">
+        <div class="chart-head"><h2>Posts per week</h2><div class="legend" id="legend"></div></div>
+        <div class="chart" id="chart" role="img"></div>
+        <details class="chart-table"><summary>Show as table</summary><table id="chart-table"></table></details>
+      </div>
+      <h2 class="section-title">Recent posts</h2>
+      <table class="recent"><thead><tr><th>When</th><th>Site</th><th>Clip</th><th>Logged by</th></tr></thead>
+        <tbody id="recent-rows"></tbody></table>
+      <p class="empty" id="activity-empty" hidden>No posts logged yet. Click "I posted it" in Post Helper, or log a post from a clip in the library.</p>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="tooltip" id="tooltip" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

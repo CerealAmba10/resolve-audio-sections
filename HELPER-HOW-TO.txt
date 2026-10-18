@@ -1,0 +1,28 @@
+Clip Organizer + Post Helper
+
+Clip Organizer (ClipOrganizer.exe) keeps track of your clip folders, renames them, picks posting batches and
+logs what was posted. Post Helper (a Firefox add-on) shows those clips when you upload on Fansly, RedGifs or
+Pornhub. Everything stays on this computer.
+
+Clip Organizer
+  1. Run ClipOrganizer.exe. It opens in your browser at http://127.0.0.1:47833 and keeps running quietly.
+  2. Add your clip folder. Organize renames every file to a name you choose ("SFW 1", "SFW 2"...).
+     Posting history follows each clip through renames.
+  3. Batch picks clips: never-posted first, then the longest-rested (with a little variety), never anything
+     used recently. It copies them into a "Month Year" subfolder. Tick sites to plan their posts too.
+  4. If it asks, let it download FFmpeg once: it makes thumbnails and checks each site's length limits.
+  5. Updates: click "Check for updates" at the bottom left. Updates come from the project's GitHub releases
+     and are checksum-verified before installing.
+
+Post Helper
+  Install the signed post-helper.xpi you were given by opening it in Firefox and clicking Add.
+  (For a quick try: about:debugging#/runtime/this-firefox, "Load Temporary Add-on...", choose the .xpi.)
+  1. Keep Clip Organizer running.
+  2. On Fansly, RedGifs or Pornhub, start a post and click the site's upload button. Your clips appear:
+     planned posts first, then the latest batch, then the whole library.
+  3. Pick a clip. A planned post also fills its caption, and a card lists its post time and options.
+  4. Check everything, click the site's own Post button, then "I posted it" on the card. Clip Organizer
+     logs it (if Clip Organizer is closed, the post is logged next time it opens).
+  Hold Shift while clicking upload to get the normal file dialog instead.
+
+Instagram, TikTok and Reddit are not supported on purpose: their terms forbid unapproved automation.

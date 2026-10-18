@@ -1,19 +1,9 @@
-// Post list in storage.local, clip files in IndexedDB. Both stay on this computer and survive restarts
-// (for a permanently installed add-on; a temporary one is wiped when Firefox closes).
-async function getPosts() {
-  return (await browser.storage.local.get({posts: []})).posts;
-}
-
-async function setPosts(posts) {
-  await browser.storage.local.set({posts});
-}
-
+// Fansly stats snapshots in IndexedDB, kept on this computer only.
 function openDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open('post-helper', 2);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains('files')) db.createObjectStore('files');
       // Stats snapshots: {path, time, data}, saved from responses Fansly's own pages loaded.
       if (!db.objectStoreNames.contains('stats')) db.createObjectStore('stats', {autoIncrement: true}).createIndex('path', 'path');
     };
@@ -22,22 +12,22 @@ function openDb() {
   });
 }
 
-async function inStore(name, mode, action) {
+async function stats(mode, action) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(name, mode);
-    const request = action(tx.objectStore(name));
+    const tx = db.transaction('stats', mode);
+    const request = action(tx.objectStore('stats'));
     tx.oncomplete = () => resolve(request && request.result);
     tx.onerror = () => reject(tx.error);
   });
 }
 
-const files = (mode, action) => inStore('files', mode, action);
-const stats = (mode, action) => inStore('stats', mode, action);
+// Clip Organizer, the desktop app on this computer that holds the clip library.
+const APP = 'http://127.0.0.1:47833';
 
-// The next post to do for a site: earliest planned time that is not posted or skipped.
-function nextPost(posts, platform) {
-  const open = posts.filter(p => p.platform === platform && p.status === 'ready').sort((a, b) => a.at.localeCompare(b.at));
-  const done = posts.filter(p => p.platform === platform && p.status !== 'ready').length;
-  return open.length ? {...open[0], position: done + 1, total: done + open.length} : null;
+async function app(path, body) {
+  const response = await fetch(APP + path, body === undefined ? {headers: {'X-Clip-Organizer': '1'}} : {
+    method: 'POST', headers: {'X-Clip-Organizer': '1', 'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (!response.ok) throw new Error(`Clip Organizer answered ${response.status}`);
+  return path.startsWith('/file/') ? response : response.json();
 }

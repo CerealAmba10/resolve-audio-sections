@@ -61,6 +61,11 @@ class RecorderExtensionTests(unittest.TestCase):
                 'browser.download.useDownloadDir': True, 'browser.download.always_ask_before_handling_new_types': False})
             try:
                 bidi.call('webExtension.install', extensionData={'type': 'path', 'path': str(ext)})
+                # Let the extension's own start tab open first, so it can't take focus from the test tab later.
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and not any(c['url'].startswith('moz-extension://')
+                                                             for c in bidi.call('browsingContext.getTree')['contexts']):
+                    time.sleep(0.2)
                 context = bidi.call('browsingContext.create', type='tab')['context']
 
                 def go(url):

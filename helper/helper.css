@@ -4,3 +4,7 @@ table { border-collapse: collapse; width: 100%; margin-top: 12px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; vertical-align: top; }
 td:nth-child(4) { max-width: 360px; white-space: pre-wrap; word-break: break-word; }
 #message { font-weight: 600; }
+.status { font-weight: 600; color: #8a8174; }
+.status.on { color: #3f8f5c; }
+.hint { color: #6b655d; }
+ol li { margin-bottom: 6px; max-width: 75ch; }
