@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clip Organizer</title>
+<title>Ducky’s Clip Organizer</title>
 <link rel="icon" href="/icon.svg">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand"><img src="/icon.svg" alt="" width="28" height="28"><span>Clip Organizer</span></div>
+    <div class="brand"><img src="/icon.svg" alt="" width="28" height="28"><span>Ducky’s Clip Organizer</span></div>
     <nav class="nav" aria-label="Views">
       <a href="#library" data-view="library">Library</a>
       <a href="#organize" data-view="organize">Organize</a>
@@ -44,7 +44,7 @@
     <section class="view" id="view-welcome" hidden>
       <div class="welcome">
         <h2>Start with a clip folder</h2>
-        <p>Pick the folder your exports land in. Clip Organizer tracks every file in it by content, so renaming or
+        <p>Pick the folder your exports land in. Ducky’s Clip Organizer tracks every file in it by content, so renaming or
           copying a clip never loses its posting history.</p>
         <button class="primary" id="welcome-add">Choose folder</button>
       </div>
@@ -76,11 +76,25 @@
     <section class="view" id="view-organize" hidden>
       <div class="form-row">
         <label class="field"><span>Rename everything to</span>
-          <input id="prefix" placeholder="SFW" autocomplete="off" spellcheck="false"></label>
-        <p class="hint" id="prefix-example">Files become "SFW 1", "SFW 2"… oldest first. Files already numbered keep their number.</p>
+          <input id="prefix" placeholder="SFW {N} {DATE}" autocomplete="off" spellcheck="false"></label>
+        <div class="tokens" role="group" aria-label="Insert into the name">
+          <button class="token" data-token="{N}" title="The number already in each file's name">{N} number</button>
+          <button class="token" data-token="{N:3}" title="The same number padded to 3 digits: 007">{N:3} padded</button>
+          <button class="token" data-token="{DATE}" title="The date in each file's name as MM-DD-YY">{DATE} MM-DD-YY</button>
+          <button class="token" data-token="{NAME}" title="The current file name">{NAME} current name</button>
+        </div>
+        <p class="hint" id="prefix-example"></p>
       </div>
       <div class="rename-preview" id="rename-preview"></div>
       <div class="actions"><button class="primary" id="apply-rename" disabled>Rename files</button></div>
+
+      <h2 class="section-title sort-title">Sort into year and month folders</h2>
+      <p class="hint">Each clip moves to its year, then month: <b>2025 / 10 October</b>. The date comes from the file name,
+        or the day the file was saved. Batch folders are left alone, and posting history moves with every clip.</p>
+      <label class="check"><input type="checkbox" id="autosort"> Sort new clips automatically
+        <span class="muted">(when the app starts, on Rescan, and every few minutes while it's open)</span></label>
+      <div class="rename-preview" id="sort-preview"></div>
+      <div class="actions"><button class="primary" id="apply-sort" disabled>Sort files</button></div>
     </section>
 
     <section class="view" id="view-batch" hidden>
@@ -118,6 +132,11 @@
       <h2 class="section-title">Recent posts</h2>
       <table class="recent"><thead><tr><th>When</th><th>Site</th><th>Clip</th><th>Logged by</th></tr></thead>
         <tbody id="recent-rows"></tbody></table>
+      <div id="watched" hidden>
+        <h2 class="section-title watched-title">Your Fansly posts</h2>
+        <p class="hint">Numbers update whenever you open your Fansly profile or Statistics page with Post Helper installed.</p>
+        <table class="recent" id="watched-table"></table>
+      </div>
       <p class="empty" id="activity-empty" hidden>No posts logged yet. Click "I posted it" in Post Helper, or log a post from a clip in the library.</p>
     </section>
   </main>

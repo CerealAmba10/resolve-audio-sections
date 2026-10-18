@@ -45,37 +45,42 @@ function toggle(clip) {
   $('attach').textContent = selected.size > 1 ? `Attach ${selected.size} clips` : 'Attach';
 }
 
-function section(title, note, tiles) {
-  return tiles.length ? el('section', {}, el('h2', {}, title, note ? el('span', {}, note) : null), el('div', {class: 'grid'}, ...tiles)) : null;
+function section(title, note, tiles, all) {
+  const bulk = all && all.length > 1 ? (multiple
+    ? el('button', {class: 'ghost small', onclick: () => attach(all, null, true)}, `Attach all ${all.length}`)
+    : el('span', {class: 'single'}, 'This upload box takes one clip at a time')) : null;
+  return tiles.length ? el('section', {}, el('h2', {}, title, note ? el('span', {}, note) : null, bulk),
+    el('div', {class: 'grid'}, ...tiles)) : null;
 }
 
 function render() {
   const term = $('search').value.trim().toLowerCase();
   const match = c => c.name.toLowerCase().includes(term);
   const planned = data.planned.filter(match);
-  const batch = data.batch.items.filter(match);
-  const inBatch = new Set(data.batch.items.map(c => c.fp));
+  const inBatch = new Set(data.batches.flatMap(b => b.items.map(c => c.fp)));
   const library = data.library.filter(c => match(c) && !inBatch.has(c.fp));
   const sections = [
     section('Planned for ' + platform, 'Picks the clip and fills its caption', planned.map(p => tile(p, p))),
-    section(data.batch.name ? `Latest batch · ${data.batch.name}` : 'Latest batch', null, batch.map(c => tile(c))),
+    ...data.batches.map((b, i) => section(`${i ? 'Batch' : 'Latest batch'} · ${b.name}`, `${b.items.length} clips`,
+      b.items.filter(match).map(c => tile(c)), term ? null : b.items)),
     section('Library', 'Newest first', library.map(c => tile(c))),
   ].filter(Boolean);
   $('body').replaceChildren(...(sections.length ? sections : [el('p', {class: 'empty'},
-    term ? 'No clips match that search.' : 'No clips yet. Add a folder in Clip Organizer, then try again.')]));
+    term ? 'No clips match that search.' : 'No clips yet. Add a folder in Ducky’s Clip Organizer, then try again.')]));
 }
 
-async function attach(clips, planned) {
+async function attach(clips, planned, bulk = false) {
   $('attach').disabled = true;
   $('attach').textContent = 'Attaching…';
   document.body.classList.add('busy');
   try {
-    await browser.runtime.sendMessage({type: 'attach', clips: clips.map(c => ({fp: c.fp, name: c.name})), planned});
+    await browser.runtime.sendMessage({type: 'attach', planned, bulk,
+      clips: clips.map(c => ({fp: c.fp, name: c.name, caption: c.caption || ''}))});
   } catch (e) {
     document.body.classList.remove('busy');
     $('attach').textContent = 'Attach';
     $('attach').disabled = !selected.size;
-    $('sub').textContent = 'That clip could not be loaded. Is Clip Organizer still open?';
+    $('sub').textContent = 'That clip could not be loaded. Is Ducky’s Clip Organizer still open?';
   }
 }
 
@@ -91,7 +96,7 @@ browser.runtime.sendMessage({type: 'picker-data', platform}).then(result => {
   render();
   $('search').focus();
 }, () => {
-  $('sub').textContent = 'Clip Organizer is not running on this computer.';
-  $('body').replaceChildren(el('div', {class: 'offline'}, el('h2', {}, 'Open Clip Organizer'),
-    el('p', {}, 'Start Clip Organizer from the Start menu or desktop, then click upload again. Or browse for a file instead.')));
+  $('sub').textContent = 'Ducky’s Clip Organizer is not running on this computer.';
+  $('body').replaceChildren(el('div', {class: 'offline'}, el('h2', {}, 'Open Ducky’s Clip Organizer'),
+    el('p', {}, 'Start Ducky’s Clip Organizer from the Start menu or desktop, then click upload again. Or browse for a file instead.')));
 });

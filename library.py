@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 DATA = Path(os.environ.get('CLIP_ORGANIZER_HOME') or
-            Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'Clip Organizer')  # not synced to OneDrive
+            Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'Duckys Clip Organizer')  # not synced to OneDrive
 MEDIA = {'.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi', '.jpg', '.jpeg', '.png', '.gif', '.webp'}
 FMT = '%Y-%m-%d %H:%M'
 SAMPLE = 1 << 20
@@ -33,7 +33,14 @@ def connect(home=DATA):
         CREATE TABLE IF NOT EXISTS planned(id INTEGER PRIMARY KEY, fp TEXT, platform TEXT, at TEXT, batch INTEGER,
             caption TEXT, options TEXT, done INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS posts_fp ON posts(fp);
+        -- Site posts seen by Post Helper's watcher: latest numbers, plus one reading per day for trends.
+        CREATE TABLE IF NOT EXISTS site_posts(platform TEXT, post_id TEXT, fp TEXT, created TEXT, counters TEXT,
+            updated TEXT, PRIMARY KEY(platform, post_id));
+        CREATE TABLE IF NOT EXISTS site_post_days(platform TEXT, post_id TEXT, day TEXT, counters TEXT,
+            PRIMARY KEY(platform, post_id, day));
     """)
+    if 'autosort' not in {r['name'] for r in db.execute('PRAGMA table_info(folders)')}:
+        db.execute('ALTER TABLE folders ADD COLUMN autosort INTEGER DEFAULT 0')
     return db
 
 
@@ -50,67 +57,190 @@ def fingerprint(path):
     return digest.hexdigest()[:32]
 
 
-def media_files(folder):
-    return sorted((p for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() in MEDIA),
-                  key=lambda p: (p.stat().st_mtime, p.name))
+def media_files(folder, skip=()):
+    """Media in the folder and its subfolders, oldest first. Batch folders (copies) in `skip` are left out."""
+    folder = Path(folder).resolve()
+    skip = [Path(s).resolve() for s in skip]
+    files = [p for p in folder.rglob('*') if p.is_file() and p.suffix.lower() in MEDIA and not p.name.startswith('.renaming-')
+             and not any(s == p.parent or s in p.parents for s in skip)]
+    return sorted(files, key=lambda p: (p.stat().st_mtime, p.name))
+
+
+def rel(folder, path):
+    """A clip's name in the library: its path inside the managed folder, e.g. "2025/SFW 12.mp4"."""
+    return Path(path).resolve().relative_to(Path(folder).resolve()).as_posix()
+
+
+def batch_dirs(db, folder):
+    return [r['path'] for r in db.execute('SELECT path FROM batches WHERE folder=?', (str(folder),))]
 
 
 def scan(db, folder):
-    """Add new files, follow renamed ones and flag missing ones. Returns the number of clips found."""
+    """Add new files, follow renamed or moved ones and flag missing ones. Returns the number of clips found."""
     folder = str(Path(folder).resolve())
     now = datetime.now().strftime(FMT)
     db.execute('INSERT OR IGNORE INTO folders(path, added) VALUES(?, ?)', (folder, now))
     known = {(r['name'], r['size'], r['mtime']): r['fp'] for r in db.execute('SELECT * FROM clips WHERE folder=?', (folder,))}
     seen = set()
-    for path in media_files(folder):
+    for path in media_files(folder, batch_dirs(db, folder)):
         stat = path.stat()
-        fp = known.get((path.name, stat.st_size, stat.st_mtime)) or fingerprint(path)
+        name = rel(folder, path)
+        fp = known.get((name, stat.st_size, stat.st_mtime)) or fingerprint(path)
         seen.add(fp)
         db.execute("""INSERT INTO clips(fp, folder, name, size, mtime, added) VALUES(?, ?, ?, ?, ?, ?)
             ON CONFLICT(fp) DO UPDATE SET folder=excluded.folder, name=excluded.name, size=excluded.size,
-            mtime=excluded.mtime, missing=0""", (fp, folder, path.name, stat.st_size, stat.st_mtime, now))
+            mtime=excluded.mtime, missing=0""", (fp, folder, name, stat.st_size, stat.st_mtime, now))
     gone = [r['fp'] for r in db.execute('SELECT fp FROM clips WHERE folder=?', (folder,)) if r['fp'] not in seen]
     db.executemany('UPDATE clips SET missing=1 WHERE fp=?', [(fp,) for fp in gone])
     db.commit()
     return len(seen)
 
 
-def rename_plan(folder, prefix):
+def rename_plan(folder, prefix, skip=()):
     """[(old name, new name)] numbering files 'Prefix 1', 'Prefix 2'... oldest first. Files already
     numbered with this prefix keep their number; new files continue after the highest one."""
     prefix = prefix.strip()
     if not prefix or re.search(r'[<>:"/\\|?*]', prefix):
         raise ValueError('Use a prefix without < > : " / \\ | ? *')
     pattern = re.compile(re.escape(prefix) + r' (\d+)$', re.I)
-    files = media_files(folder)
-    kept = {p.name for p in files if pattern.match(p.stem)}
-    used = {int(pattern.match(Path(n).stem).group(1)) for n in kept}
-    number = max(used, default=0)
+    files = media_files(folder, skip)
+    kept = {p for p in files if pattern.match(p.stem)}
+    number = max((int(pattern.match(p.stem).group(1)) for p in kept), default=0)
     plan = []
     for path in files:
-        if path.name in kept:
+        if path in kept:
             continue
         number += 1
-        plan.append((path.name, f'{prefix} {number}{path.suffix.lower()}'))
+        plan.append((rel(folder, path), rel(folder, path.with_name(f'{prefix} {number}{path.suffix.lower()}'))))
+    return plan
+
+
+TOKEN = re.compile(r'\{(N(?::(\d+))?|DATE|NAME)\}')
+DATES = [(re.compile(r'(?<!\d)((?:19|20)\d{2})[-_. ]?(\d{2})[-_. ]?(\d{2})(?!\d)'), 'ymd'),
+         (re.compile(r'(?<!\d)(\d{1,2})[-_.](\d{1,2})[-_.](\d{4}|\d{2})(?!\d)'), 'mdy')]
+
+
+def name_date(stem):
+    """(date, span) of the first date written in a file name, or (None, None).
+    Reads 2026-10-05, 20261005, 10-05-26 and 10.05.2026; a first part over 12 is taken as the day."""
+    for pattern, order in DATES:
+        for match in pattern.finditer(stem):
+            a, b, c = (int(g) for g in match.groups())
+            if order == 'ymd':
+                year, month, day = a, b, c
+            else:
+                month, day, year = (b, a, c) if a > 12 >= b else (a, b, c)
+                year += 2000 if year < 100 else 0
+            try:
+                return datetime(year, month, day), match.span()
+            except ValueError:
+                continue
+    return None, None
+
+
+def name_number(stem):
+    """A clip's sequence number: the last number in its name once any date is taken out."""
+    _, span = name_date(stem)
+    if span:
+        stem = stem[:span[0]] + ' ' + stem[span[1]:]
+    numbers = re.findall(r'\d+', stem)
+    return int(numbers[-1]) if numbers else None
+
+
+def template_plan(folder, template, skip=()):
+    """Bulk rename from a pattern such as "SFW {N} {DATE}".
+    {N}: the number already in the file's name (a free number if it has none or it's taken); {N:3} pads to 3 digits.
+    {DATE}: the date in the file's name as MM-DD-YY (the file's modified date if the name has none).
+    {NAME}: the current name. Returns ([(old, new)], notes)."""
+    template = template.strip()
+    if re.search(r'[<>:"/\\|?*]', TOKEN.sub('', template)):
+        raise ValueError('Use a name without < > : " / \\ | ? *')
+    if not re.search(r'\{N(:\d+)?\}|\{NAME\}', template):
+        raise ValueError('Add {N} or {NAME} so every file ends up with a different name.')
+    files = media_files(folder, skip)
+    numbers = {p: name_number(p.stem) for p in files}
+    highest = max((n for n in numbers.values() if n is not None), default=0)
+    assigned, taken, notes = {}, set(), []
+    for path in files:  # oldest first, so the older file keeps a shared number
+        n = numbers[path]
+        if n is None or n in taken:
+            highest += 1
+            if n is not None:
+                notes.append(f'{path.name}: number {n} is already used, so it becomes {highest}.')
+            n = highest
+        taken.add(n)
+        assigned[path] = n
+    plan, finals = [], {}
+    for path in files:
+        date = name_date(path.stem)[0] or datetime.fromtimestamp(path.stat().st_mtime)
+
+        def fill(match):
+            if match.group(1) == 'DATE':
+                return date.strftime('%m-%d-%y')
+            if match.group(1) == 'NAME':
+                return path.stem
+            return str(assigned[path]).zfill(int(match.group(2) or 0))
+        new = rel(folder, path.with_name(re.sub(r'\s+', ' ', TOKEN.sub(fill, template)).strip() + path.suffix.lower()))
+        finals.setdefault(new.lower(), []).append(rel(folder, path))
+        if new != rel(folder, path):
+            plan.append((rel(folder, path), new))
+    clashes = [names for names in finals.values() if len(names) > 1]
+    if clashes:
+        raise ValueError('These files would get the same name: ' + '; '.join(', '.join(n) for n in clashes[:5]))
+    return plan, notes
+
+
+def sort_plan(folder, skip=()):
+    """Move clips into a folder per year with a subfolder per month: "2025/10 October/clip.mp4".
+    The date comes from the file name (2025-10-05, 10-05-25...), else the date the file was saved."""
+    plan, finals = [], {}
+    for path in media_files(folder, skip):
+        date = name_date(path.stem)[0] or datetime.fromtimestamp(path.stat().st_mtime)
+        old, new = rel(folder, path), f"{date.year}/{date.strftime('%m %B')}/{path.name}"
+        finals.setdefault(new.lower(), []).append(old)
+        if old.lower() != new.lower():
+            plan.append((old, new))
+    clashes = [names for names in finals.values() if len(names) > 1]
+    if clashes:
+        raise ValueError('These files have the same name and would land in the same folder: ' +
+                         '; '.join(', '.join(n) for n in clashes[:5]) + '. Rename them first.')
     return plan
 
 
 def apply_renames(db, folder, plan):
-    """Two-step rename so swaps and clashes can never overwrite a file."""
+    """Rename or move in two steps so swaps and clashes can never overwrite a file; then tidy empty folders."""
     folder = Path(folder)
-    targets = {new.lower() for _, new in plan}
     sources = {old.lower() for old, _ in plan}
-    for p in folder.iterdir():
-        if p.name.lower() in targets and p.name.lower() not in sources:
-            raise ValueError(f'{p.name} already exists in this folder.')
+    for _, new in plan:
+        if (folder / new).exists() and new.lower() not in sources:
+            raise ValueError(f'{new} already exists.')
     temps = []
     for i, (old, new) in enumerate(plan):
         temp = folder / f'.renaming-{os.getpid()}-{i}{Path(old).suffix}'
         (folder / old).rename(temp)
         temps.append((temp, new))
     for temp, new in temps:
+        (folder / new).parent.mkdir(parents=True, exist_ok=True)
         temp.rename(folder / new)
+    for parent in sorted({(folder / old).parent for old, _ in plan}, key=lambda p: -len(p.parts)):
+        while parent != folder and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()  # a folder emptied by the move
+            parent = parent.parent
     return scan(db, folder)
+
+
+def sync(db, folder):
+    """Scan a folder and, if auto-sort is on for it, file new clips into their year/month folders."""
+    count = scan(db, folder)
+    row = db.execute('SELECT autosort FROM folders WHERE path=?', (str(Path(folder).resolve()),)).fetchone()
+    if row and row['autosort']:
+        try:
+            plan = sort_plan(folder, batch_dirs(db, folder))
+        except ValueError:
+            return count  # name clash: leave it for the person to sort out in Organize
+        if plan:
+            count = apply_renames(db, folder, plan)
+    return count
 
 
 def last_used(db):
@@ -155,8 +285,13 @@ def make_batch(db, folder, chosen, now, name=None):
     batch = db.execute('INSERT INTO batches(folder, path, created) VALUES(?, ?, ?)',
                        (str(folder), str(target), created)).lastrowid
     for clip, _ in chosen:
-        shutil.copy2(Path(clip['folder']) / clip['name'], target / clip['name'])
-        db.execute('INSERT INTO batch_items(batch, fp, name) VALUES(?, ?, ?)', (batch, clip['fp'], clip['name']))
+        name = Path(clip['name']).name
+        stem, n = Path(name).stem, 1
+        while (target / name).exists():  # same file name from two subfolders
+            n += 1
+            name = f'{stem} ({n}){Path(clip["name"]).suffix}'
+        shutil.copy2(Path(clip['folder']) / clip['name'], target / name)
+        db.execute('INSERT INTO batch_items(batch, fp, name) VALUES(?, ?, ?)', (batch, clip['fp'], name))
     db.commit()
     return batch, target
 
@@ -166,7 +301,8 @@ def record_post(db, platform, name=None, fp=None, at=None, source='manual'):
     if not fp:
         row = db.execute("""SELECT i.fp FROM batch_items i JOIN batches b ON b.id=i.batch WHERE i.name=?
             ORDER BY b.created DESC LIMIT 1""", (name,)).fetchone() or \
-            db.execute('SELECT fp FROM clips WHERE name=? ORDER BY added DESC LIMIT 1', (name,)).fetchone()
+            db.execute("SELECT fp FROM clips WHERE name=? OR name LIKE ? ORDER BY added DESC LIMIT 1",
+                       (name, '%/' + name)).fetchone()
         if not row:
             return False
         fp = row['fp']
@@ -177,6 +313,50 @@ def record_post(db, platform, name=None, fp=None, at=None, source='manual'):
         ORDER BY at LIMIT 1)""", (fp, platform))
     db.commit()
     return True
+
+
+POST_URLS = {'Fansly': 'https://fansly.com/post/{id}'}  # add RedGifs/Pornhub once their post pages are known
+
+
+def post_url(platform, post_id):
+    template = POST_URLS.get(platform)
+    return template.format(id=post_id) if template else None
+
+
+def link_post(db, platform, post_id, fp):
+    """Tie a site post to the clip Post Helper attached to it."""
+    db.execute("""INSERT INTO site_posts(platform, post_id, fp) VALUES(?, ?, ?)
+        ON CONFLICT(platform, post_id) DO UPDATE SET fp=excluded.fp""", (platform, str(post_id), fp))
+    db.commit()
+
+
+def record_site_posts(db, platform, posts, now=None):
+    """Save the numbers the watcher read for the creator's own posts: [{id, created, counters}].
+    Only the latest numbers and one reading per day are kept, so storage stays tiny."""
+    now = now or datetime.now()
+    stamp, day = now.strftime(FMT), now.strftime('%Y-%m-%d')
+    for post in posts:
+        counters = json.dumps({k: v for k, v in post.get('counters', {}).items() if isinstance(v, (int, float))})
+        db.execute("""INSERT INTO site_posts(platform, post_id, created, counters, updated) VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(platform, post_id) DO UPDATE SET created=COALESCE(excluded.created, created),
+            counters=excluded.counters, updated=excluded.updated""",
+                   (platform, str(post['id']), post.get('created'), counters, stamp))
+        db.execute('INSERT OR REPLACE INTO site_post_days(platform, post_id, day, counters) VALUES(?, ?, ?, ?)',
+                   (platform, str(post['id']), day, counters))
+    db.commit()
+    return len(posts)
+
+
+def clip_totals(db, fp):
+    """A clip's numbers added up across every site post it became."""
+    totals, posts = {}, []
+    for row in db.execute('SELECT * FROM site_posts WHERE fp=? ORDER BY created DESC', (fp,)):
+        counters = json.loads(row['counters'] or '{}')
+        posts.append(dict(platform=row['platform'], post_id=row['post_id'], created=row['created'],
+                          counters=counters, updated=row['updated'], url=post_url(row['platform'], row['post_id'])))
+        for k, v in counters.items():
+            totals[k] = totals.get(k, 0) + v
+    return totals, posts
 
 
 def thumbnail(fp, source, cache):

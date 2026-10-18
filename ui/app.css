@@ -138,6 +138,9 @@ th.num, td.num { white-space: nowrap; }
 .detail img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--raised); }
 .detail h2 { overflow-wrap: anywhere; }
 .detail h3 { margin: 0 0 6px; font-size: 12px; color: var(--ink-3); font-weight: 600; }
+.detail a, #watched a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line);
+  text-underline-offset: 3px; }
+.detail a:hover, #watched a:hover { text-decoration-color: var(--accent); }
 .detail ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
 .detail li { display: flex; justify-content: space-between; gap: 10px; }
 .log-post { display: flex; gap: 8px; }
@@ -145,6 +148,14 @@ th.num, td.num { white-space: nowrap; }
 
 /* Organize */
 .form-row { display: grid; gap: 8px; max-width: 520px; margin-bottom: 18px; }
+.tokens { display: flex; gap: 6px; flex-wrap: wrap; }
+.token { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-size: 12px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; transition: background-color 150ms var(--ease), color 150ms var(--ease); }
+.token:hover { background: var(--raised); color: var(--ink); }
+.rename-preview p.note { color: var(--recent); padding: 8px 14px; border-bottom: 1px solid var(--line-soft); }
+.sort-title { margin-top: 36px; }
+.check { display: flex; align-items: center; gap: 8px; margin: 12px 0 14px; color: var(--ink-2); cursor: pointer; }
+.small { font-size: 12px; }
 .hint { margin: 0; color: var(--ink-3); font-size: 13px; }
 .rename-preview { border: 1px solid var(--line-soft); border-radius: 10px; max-height: 56vh; overflow: auto; background: var(--panel); }
 .rename-preview div { display: grid; grid-template-columns: 1fr 24px 1fr; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
@@ -188,6 +199,8 @@ th.num, td.num { white-space: nowrap; }
 .chart-table table { margin-top: 8px; font-size: 12px; }
 .section-title { margin-bottom: 8px; }
 .recent td { font-size: 13px; }
+.watched-title { margin-top: 32px; }
+#watched .hint { margin-bottom: 8px; }
 
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); background: var(--raised); border: 1px solid var(--line);
   color: var(--ink); padding: 9px 16px; border-radius: 9px; opacity: 0; pointer-events: none; max-width: 70ch;

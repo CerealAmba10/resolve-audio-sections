@@ -1,16 +1,31 @@
-// Connects the picker and the post card on each site to Clip Organizer on this computer.
-async function flushPending() {
+// Connects the picker and the post card on each site to Ducky’s Clip Organizer on this computer.
+let flushing = Promise.resolve(0);
+
+// One sync at a time, so overlapping calls can never log the same post twice.
+function flushPending() {
+  flushing = flushing.then(sendPending, sendPending);
+  return flushing;
+}
+
+async function sendPending() {
   const {pending = []} = await browser.storage.local.get('pending');
   const left = [];
-  for (const post of pending) {
+  for (const item of pending) {
     try {
-      await app('/api/posted', post);
+      await app(item.path || '/api/posted', item.body || item);
     } catch (e) {
-      left.push(post);  // app closed: keep it and try again later
+      left.push(item);  // app closed: keep it and try again later
     }
   }
   await browser.storage.local.set({pending: left});
   return left.length;
+}
+
+// Things the app must not miss (posts, post-to-clip links) wait here until it's open.
+async function queue(path, body) {
+  const {pending = []} = await browser.storage.local.get('pending');
+  await browser.storage.local.set({pending: [...pending, {path, body}]});
+  return flushPending();
 }
 
 browser.runtime.onMessage.addListener(async (message, sender) => {
@@ -20,13 +35,13 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
     return app(`/api/helper/clips?platform=${encodeURIComponent(message.platform)}`);
   }
   if (message.type === 'attach') {
-    // Fetch each chosen clip from the app and hand it to the page's own upload field.
-    const files = [];
-    for (const clip of message.clips) {
-      const response = await app('/file/' + clip.fp);
-      files.push({name: clip.name, type: guessType(clip.name), bytes: await response.arrayBuffer()});
-    }
-    await browser.tabs.sendMessage(tab, {type: 'attach', files, planned: message.planned || null, clip: message.clips[0]});
+    // The page's content script fetches the clips itself (as file-backed Blobs, so big batches don't fill memory).
+    await browser.tabs.sendMessage(tab, {type: 'attach', planned: message.planned || null, clips: message.clips,
+                                         bulk: !!message.bulk});
+    return true;
+  }
+  if (message.type === 'expect-posts') {
+    waiting[tab] = message.clips.slice();  // the next posts created on this tab become these clips, in order
     return true;
   }
   if (message.type === 'close-picker' || message.type === 'browse') {
@@ -34,10 +49,11 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
     return true;
   }
   if (message.type === 'posted') {
-    const post = {platform: message.platform, fp: message.fp, source: 'post-helper',
-                  at: new Date().toISOString().slice(0, 16).replace('T', ' ')};
+    const local = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+    const at = local.toISOString().slice(0, 16).replace('T', ' ');
     const {pending = []} = await browser.storage.local.get('pending');
-    await browser.storage.local.set({pending: [...pending, post]});
+    await browser.storage.local.set({pending: [...pending, ...message.fps.map(fp =>
+      ({path: '/api/posted', body: {platform: message.platform, fp, source: 'post-helper', at}}))]});
     return {waiting: await flushPending()};
   }
   if (message.type === 'status') {
@@ -49,12 +65,6 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
     }
   }
 });
-
-function guessType(name) {
-  const ext = name.split('.').pop().toLowerCase();
-  return {mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska',
-          jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp'}[ext] || '';
-}
 
 browser.browserAction.onClicked.addListener(() => browser.tabs.create({url: 'helper.html'}));
 browser.runtime.onInstalled.addListener(() => browser.tabs.create({url: 'helper.html'}));

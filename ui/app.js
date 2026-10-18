@@ -47,6 +47,11 @@ function ago(text) {
 }
 
 const STATUS = {fresh: 'Never posted', rested: 'Rested', recent: 'Recent'};
+// "likeCount" -> "Likes", "tipAmount" -> "Tip amount": readable names for whatever numbers the site sends.
+const label = key => {
+  const words = key.replace(/yCount$/, 'ies').replace(/Count$/, 's').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
 
 /* Routing and shell */
 function view() {
@@ -132,7 +137,8 @@ function renderLibrary() {
     'aria-selected': c.fp === state.selected ? 'true' : 'false', tabindex: 0,
     onclick: () => showDetail(c.fp), onkeydown: e => e.key === 'Enter' && showDetail(c.fp)},
     el('td', {}, thumb(c.fp)),
-    el('td', {}, el('div', {class: 'clip-name'}, c.name)),
+    el('td', {}, el('div', {class: 'clip-name'}, c.name.split('/').pop()),
+      c.name.includes('/') ? el('div', {class: 'muted small'}, c.name.split('/').slice(0, -1).join(' / ')) : null),
     el('td', {}, el('span', {class: `status ${c.status}`}, STATUS[c.status])),
     el('td', {}, el('div', {class: 'posted'}, Object.keys(c.posts).length ? Object.entries(c.posts).map(([p, v]) =>
       el('span', {title: `${p}: last ${v.last}`}, el('i', {class: `swatch ${SWATCH(p)}`}), `${v.count}`)) : el('span', {class: 'muted'}, '–'))),
@@ -164,6 +170,14 @@ async function showDetail(fp) {
     el('div', {}, el('h3', {}, `Posted ${d.posts.length} time${d.posts.length === 1 ? '' : 's'}`),
       d.posts.length ? el('ul', {}, d.posts.map(p => el('li', {}, el('span', {}, el('i', {class: `swatch ${SWATCH(p.platform)}`}), ' ', p.platform),
         el('span', {class: 'muted'}, p.at)))) : el('p', {class: 'muted'}, 'Not posted yet.')),
+    Object.keys(d.totals).length ? el('div', {}, el('h3', {}, `How it did · ${d.site_posts.length} post${d.site_posts.length === 1 ? '' : 's'}`),
+      el('ul', {}, Object.entries(d.totals).map(([k, v]) => el('li', {}, el('span', {}, label(k)),
+        el('span', {class: 'num'}, v.toLocaleString())))),
+      el('p', {class: 'muted small'}, 'Added up across every post of this clip that Post Helper has seen.')) : null,
+    d.site_posts.length ? el('div', {}, el('h3', {}, 'Its posts'), el('ul', {}, d.site_posts.map(p => el('li', {},
+      p.url ? el('a', {href: p.url, target: '_blank', rel: 'noreferrer'}, `${p.platform} · ${p.created || 'post ' + p.post_id}`)
+            : el('span', {}, `${p.platform} · ${p.created || p.post_id}`),
+      el('span', {class: 'muted'}, Object.entries(p.counters).slice(0, 2).map(([k, v]) => `${v.toLocaleString()} ${label(k).toLowerCase()}`).join(' · ')))))) : null,
     d.planned.filter(p => !p.done).length ? el('div', {}, el('h3', {}, 'Planned'),
       el('ul', {}, d.planned.filter(p => !p.done).map(p => el('li', {}, el('span', {}, p.platform), el('span', {class: 'muted'}, p.at))))) : null,
     d.batches.length ? el('div', {}, el('h3', {}, 'In batches'), el('ul', {}, d.batches.map(b => el('li', {},
@@ -183,13 +197,50 @@ let renameTimer;
 function loadOrganize() {
   const folder = state.folders.find(f => f.path === state.folder);
   if (!$('prefix').value && folder?.prefix) $('prefix').value = folder.prefix;
+  $('autosort').checked = !!folder?.autosort;
   previewRename();
+  run(previewSort)();
+}
+
+function movesList(box, plan, empty) {
+  box.replaceChildren(...(plan.length ? plan.map(([a, b]) => el('div', {}, el('span', {}, a), el('span', {class: 'arrow'}, '→'),
+    el('span', {class: 'new'}, b))) : [el('p', {}, empty)]));
+}
+
+async function previewSort() {
+  let plan;
+  try {
+    ({plan} = await api('/api/sort', {folder: state.folder}));
+  } catch (e) {
+    $('sort-preview').replaceChildren(el('p', {class: 'note'}, e.message));
+    $('apply-sort').disabled = true;
+    return;
+  }
+  movesList($('sort-preview'), plan, 'Every clip is already in its year and month folder.');
+  $('apply-sort').disabled = !plan.length;
+  $('apply-sort').textContent = plan.length ? `Sort ${plan.length} file${plan.length === 1 ? '' : 's'}` : 'Sort files';
+}
+
+async function applySort() {
+  const button = $('apply-sort');
+  button.classList.add('busy');
+  try {
+    const {plan} = await api('/api/sort', {folder: state.folder, apply: true});
+    toast(`Sorted ${plan.length} files into year and month folders.`);
+    await refreshState();
+    await previewSort();
+    previewRename();
+  } finally {
+    button.classList.remove('busy');
+  }
 }
 
 async function previewRename() {
   const prefix = $('prefix').value.trim();
-  $('prefix-example').textContent = `Files become "${prefix || 'SFW'} 1", "${prefix || 'SFW'} 2"… oldest first. ` +
-    'Files already numbered keep their number.';
+  $('prefix-example').textContent = /\{(N|DATE|NAME)/.test(prefix)
+    ? '{N} keeps the number already in each name (free numbers for files without one). {DATE} keeps the date in the name, ' +
+      'or uses the date the file was saved.'
+    : `Just a name numbers files oldest first: "${prefix || 'SFW'} 1", "${prefix || 'SFW'} 2"… Files already named that way keep their number.`;
   const box = $('rename-preview');
   if (!prefix) {
     box.replaceChildren(el('p', {}, 'Type a name to see what each file will be called.'));
@@ -197,9 +248,9 @@ async function previewRename() {
     return;
   }
   try {
-    const {plan} = await api('/api/rename', {folder: state.folder, prefix});
-    box.replaceChildren(...(plan.length ? plan.map(([a, b]) => el('div', {}, el('span', {}, a), el('span', {class: 'arrow'}, '→'),
-      el('span', {class: 'new'}, b))) : [el('p', {}, 'Every file already follows this name.')]));
+    const {plan, notes} = await api('/api/rename', {folder: state.folder, prefix});
+    movesList(box, plan, 'Every file already follows this name.');
+    box.prepend(...notes.map(n => el('p', {class: 'note'}, n)));
     $('apply-rename').disabled = !plan.length;
     $('apply-rename').textContent = plan.length ? `Rename ${plan.length} file${plan.length === 1 ? '' : 's'}` : 'Rename files';
   } catch (e) {
@@ -283,6 +334,16 @@ async function loadActivity() {
     el('td', {}, el('span', {class: 'posted'}, el('span', {}, el('i', {class: `swatch ${SWATCH(r.platform)}`}), r.platform))),
     el('td', {}, r.name || 'Unknown clip'), el('td', {class: 'muted'}, r.source === 'post-helper' ? 'Post Helper' : 'You'))));
   $('activity-empty').hidden = data.recent.length > 0;
+  const keys = [...new Set(data.watched.flatMap(p => Object.keys(p.counters)))].slice(0, 6);
+  $('watched').hidden = !data.watched.length;
+  $('watched-table').replaceChildren(
+    el('tr', {}, el('th', {}, 'Posted'), el('th', {}, 'Clip'), ...keys.map(k => el('th', {class: 'num'}, label(k))),
+      el('th', {class: 'num'}, 'Checked')),
+    ...data.watched.map(p => el('tr', {}, el('td', {}, p.url
+        ? el('a', {href: p.url, target: '_blank', rel: 'noreferrer'}, p.created || 'Open post') : p.created || '–'),
+      el('td', {}, p.name ? p.name.split('/').pop() : el('span', {class: 'muted'}, 'Not from Post Helper')),
+      ...keys.map(k => el('td', {class: 'num'}, k in p.counters ? p.counters[k].toLocaleString() : '–')),
+      el('td', {class: 'num muted'}, ago(p.updated)))));
 }
 
 function drawChart(weeks, series) {
@@ -345,7 +406,7 @@ async function checkUpdate() {
 }
 
 async function installUpdate() {
-  if (!confirm('Install the update now? Clip Organizer restarts and this page reloads.')) return;
+  if (!confirm('Install the update now? Ducky’s Clip Organizer restarts and this page reloads.')) return;
   await api('/api/update', {install: true});
   toast('Installing the update…');
   setTimeout(() => location.reload(), 4000);
@@ -364,7 +425,24 @@ for (const b of document.querySelectorAll('#status-filter button')) b.onclick = 
   renderLibrary();
 };
 $('prefix').oninput = () => { clearTimeout(renameTimer); renameTimer = setTimeout(previewRename, 200); };
+for (const b of document.querySelectorAll('.token')) b.onclick = () => {
+  const input = $('prefix');
+  const at = input.selectionStart ?? input.value.length;
+  const before = input.value.slice(0, at), after = input.value.slice(input.selectionEnd ?? at);
+  const pad = before && !before.endsWith(' ') ? ' ' : '';
+  input.value = before + pad + b.dataset.token + after;
+  input.focus();
+  input.setSelectionRange(before.length + pad.length + b.dataset.token.length, before.length + pad.length + b.dataset.token.length);
+  previewRename();
+};
 $('apply-rename').onclick = run(applyRename);
+$('apply-sort').onclick = run(applySort);
+$('autosort').onchange = run(async () => {
+  const on = $('autosort').checked;
+  await api('/api/sort', {folder: state.folder, autosort: on});
+  toast(on ? 'New clips in this folder will be sorted automatically.' : 'Automatic sorting is off for this folder.');
+  await refreshState();
+});
 for (const id of ['count', 'recent', 'window']) $(id).oninput = () => { clearTimeout(batchTimer); batchTimer = setTimeout(run(previewBatch), 250); };
 $('reshuffle').onclick = run(() => { state.seed += 1; return previewBatch(); });
 $('create-batch').onclick = run(createBatch);

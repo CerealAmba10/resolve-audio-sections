@@ -1,28 +1,49 @@
-Clip Organizer + Post Helper
+Ducky’s Clip Organizer + Post Helper
 
-Clip Organizer (ClipOrganizer.exe) keeps track of your clip folders, renames them, picks posting batches and
+Ducky’s Clip Organizer (DuckysClipOrganizer.exe) keeps track of your clip folders, renames them, picks posting batches and
 logs what was posted. Post Helper (a Firefox add-on) shows those clips when you upload on Fansly, RedGifs or
 Pornhub. Everything stays on this computer.
 
-Clip Organizer
-  1. Run ClipOrganizer.exe. It opens in your browser at http://127.0.0.1:47833 and keeps running quietly.
-  2. Add your clip folder. Organize renames every file to a name you choose ("SFW 1", "SFW 2"...).
+Ducky’s Clip Organizer
+  1. Run DuckysClipOrganizer.exe. It opens in your browser at http://127.0.0.1:47833 and keeps running quietly.
+  2. Add each folder you want managed (nothing is tracked until you add it). Organize renames files in bulk:
+       SFW                -> SFW 1, SFW 2... numbered oldest first
+       SFW {N} {DATE}     -> keeps each file's own number and date: "take 7 2026-10-05" becomes "SFW 7 10-05-26"
+       {N:3} pads the number (007). {DATE} is MM-DD-YY from the name, or the file's saved date if the name has none.
+       {NAME} is the current name. The preview shows every change, and any number used twice, before you apply it.
      Posting history follows each clip through renames.
+     Sort moves clips into a folder per year with a folder per month inside (2025 / 10 October), using the
+     date in the name or the day the file was saved. Tick "Sort new clips automatically" to keep it that way:
+     new clips are filed when the app starts, on Rescan, and every few minutes while it's open.
   3. Batch picks clips: never-posted first, then the longest-rested (with a little variety), never anything
      used recently. It copies them into a "Month Year" subfolder. Tick sites to plan their posts too.
   4. If it asks, let it download FFmpeg once: it makes thumbnails and checks each site's length limits.
-  5. Updates: click "Check for updates" at the bottom left. Updates come from the project's GitHub releases
+  5. Works offline. It only goes online when you click "Check for updates" or "Download FFmpeg".
+  6. Updates: click "Check for updates" at the bottom left. Updates come from the project's GitHub releases
      and are checksum-verified before installing.
 
 Post Helper
   Install the signed post-helper.xpi you were given by opening it in Firefox and clicking Add.
   (For a quick try: about:debugging#/runtime/this-firefox, "Load Temporary Add-on...", choose the .xpi.)
-  1. Keep Clip Organizer running.
+  1. Keep Ducky’s Clip Organizer running.
   2. On Fansly, RedGifs or Pornhub, start a post and click the site's upload button. Your clips appear:
      planned posts first, then the latest batch, then the whole library.
   3. Pick a clip. A planned post also fills its caption, and a card lists its post time and options.
-  4. Check everything, click the site's own Post button, then "I posted it" on the card. Clip Organizer
-     logs it (if Clip Organizer is closed, the post is logged next time it opens).
+     Each batch has "Attach all" for upload boxes that take several files.
+  4. Check everything, click the site's own Post button, then "I posted it" on the card. Ducky’s Clip Organizer
+     logs it (if Ducky’s Clip Organizer is closed, the post is logged next time it opens).
   Hold Shift while clicking upload to get the normal file dialog instead.
+
+How your posts are doing (Fansly)
+  Every time you open your own Fansly profile or Statistics page, Post Helper reads the numbers Fansly shows
+  on your posts (likes, tips, replies...) and adds them to Ducky's Clip Organizer: see Activity, or a clip's
+  details for its totals across every time it was posted. Posts made through Post Helper are linked to their
+  clip automatically. It never reads messages, makes no extra requests and stores only the latest numbers plus
+  one reading a day, all on this computer.
+
+Fansly with FBuddy (PRO): open Bulk Posts, Add media, Upload new. Post Helper's picker opens: click "Attach all"
+on a batch. Then click Copy next to captions on the Post Helper card, paste them into FBuddy's "Paste texts",
+keep Sequential order, set the schedule and Post. Click "I posted all" so Ducky’s Clip Organizer logs them.
+Fansly without FBuddy: post one at a time from the Planned row; the card shows each post's time and options.
 
 Instagram, TikTok and Reddit are not supported on purpose: their terms forbid unapproved automation.

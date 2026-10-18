@@ -18,29 +18,41 @@ except RuntimeError:
 
 EXTENSION = Path(__file__).resolve().parent.parent / 'helper'
 # Stand-in post form: a site button that clicks a hidden file input, like the real sites do.
-FORM = (b'<input type="file" id="up" accept="video/*" style="display:none"><button id="pick">Upload</button>'
+FORM = (b'<input type="file" id="up" accept="video/*" multiple style="display:none"><button id="pick">Upload</button>'
         b'<button id="post">Post</button><textarea id="cap" style="width:400px;height:100px"></textarea>'
         b'<script>pick.onclick = () => up.click(); up.onchange = async () => document.title = "got " +'
-        b' up.files[0].name + " " + (await up.files[0].text()); post.onclick = () => window.posted = true;</script>')
-VIEWS = iter(range(100, 10000, 25))
-STATS_PAGE = (b'<script>(async () => { const r = await fetch("/api/v1/account/stats/412345678901234567?days=7");'
-              b' const m = await fetch("/api/v1/messages/stats"); document.title = "views " + (await r.json()).response.views;'
-              b' })()</script>')
+        b' [...up.files].map(f => f.name).join(",") + " " + (await up.files[0].text());'
+        b' post.onclick = () => { window.posted = true; fetch("/api/v1/post", {method: "POST", body: "{}"}); };</script>')
+LIKES = iter(range(5, 1000))
+# Stand-in Fansly pages: the profile loads the account, its timeline and a message thread; Post creates a post.
+PROFILE = (b'<script>(async () => { await fetch("/api/v1/account/me"); const t = await fetch("/api/v1/timelinenew/412345678901234567");'
+           b' await fetch("/api/v1/messages/stats"); document.title = "seen " + (await t.json()).response.posts[0].likeCount;'
+           b' })()</script>')
 
 
 class Site(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
+    def send_body(self, body, kind='application/json'):
         self.send_response(200)
-        if self.path.startswith('/api/v1/'):
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            secret = 'DM-SECRET' if 'messages' in self.path else ''
-            self.wfile.write(json.dumps({'success': True, 'response': {
-                'views': 0 if secret else next(VIEWS), 'tips': 5, 'note': secret}}).encode())
-            return
-        self.send_header('Content-Type', 'text/html')
+        self.send_header('Content-Type', kind)
         self.end_headers()
-        self.wfile.write(b'<!doctype html><body>' + (STATS_PAGE if self.path == '/stats-page' else FORM))
+        self.wfile.write(body if isinstance(body, bytes) else json.dumps(body).encode())
+
+    def do_GET(self):
+        if self.path == '/api/v1/account/me':
+            return self.send_body({'success': True, 'response': {'account': {'id': '412345678901234567', 'username': 'ducky'}}})
+        if self.path.startswith('/api/v1/timelinenew/'):
+            return self.send_body({'success': True, 'response': {'posts': [
+                {'id': '900', 'accountId': '412345678901234567', 'createdAt': 1790000000, 'likeCount': next(LIKES), 'tipAmount': 200,
+                 'content': 'caption'},
+                {'id': '777', 'accountId': '222', 'createdAt': 1790000000, 'likeCount': 99}]}})  # someone else's
+        if self.path.startswith('/api/v1/messages'):
+            return self.send_body({'response': [{'id': '555', 'accountId': '412345678901234567', 'createdAt': 1, 'likeCount': 1,
+                                                 'content': 'DM-SECRET'}]})
+        self.send_body(b'<!doctype html><body>' + (PROFILE if self.path == '/profile' else FORM), 'text/html')
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        self.send_body({'success': True, 'response': {'id': '900', 'accountId': '412345678901234567'}})
 
     def log_message(self, *args):
         pass
@@ -69,9 +81,11 @@ class PostHelperTests(unittest.TestCase):
         manifest = json.loads((ext / 'manifest.json').read_text())
         manifest['content_scripts'][0]['matches'].append('http://127.0.0.1/*')
         (ext / 'manifest.json').write_text(json.dumps(manifest))
+        (ext / 'watcher.js').write_text((ext / 'watcher.js').read_text(encoding='utf-8').replace(
+            "platform: 'Fansly'", "platform: 'Fansly'"), encoding='utf-8')
         for name, old, new in (('sites.js', "'Fansly': 'fansly.com'", "'Fansly': '127.0.0.1'"),
                                ('store.js', 'http://127.0.0.1:47833', f'http://127.0.0.1:{self.servers[0].server_port}'),
-                               ('stats-capture.js', "['*://apiv3.fansly.com/api/v1/*']", "['http://127.0.0.1/api/v1/*']")):
+                               ('watcher.js', "['*://apiv3.fansly.com/api/v1/*']", "['http://127.0.0.1/api/v1/*']")):
             (ext / name).write_text((ext / name).read_text().replace(old, new))
         self.process, self.bidi = launch(root / 'profile')
         self.bidi.call('webExtension.install', extensionData={'type': 'path', 'path': str(ext)})
@@ -143,20 +157,58 @@ class PostHelperTests(unittest.TestCase):
         self.assertEqual(tuple(post), ('Fansly', 'post-helper', 'SFW 1.mp4'))
         self.assertEqual(len(self.app.picker('Fansly')['planned']), 1)  # that plan is done
 
-    def test_saves_fansly_stats_quietly_and_never_messages(self):
+    def test_attach_whole_batch_with_fbuddy_captions_and_log_all(self):
         page = self.bidi.call('browsingContext.create', type='tab')['context']
-        seen = []
-        for _ in range(3):  # three visits to the stats page on different days
-            self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/stats-page', wait='complete')
-            seen.append(self.wait(page, "document.title.startsWith('views') && document.title"))
-            time.sleep(0.5)
-        self.assertEqual(len(set(seen)), 3)  # the page still gets each real response
-        saved = json.loads(self.wait(self.panel, "stats('readonly', s => s.getAll()).then(a => a.length === 3 && JSON.stringify(a))"))
-        self.assertEqual({s['path'] for s in saved}, {'/api/v1/account/stats/{id}'})  # DMs are never saved
-        shapes = self.js(self.panel, "JSON.stringify(shape({response: {views: 9, '4123': {name: 'Fan'}}, list: [{tips: 1}]}))")
-        self.assertEqual(json.loads(shapes), {'response': {'views': 'number', '{id}': {'name': 'string'}},
-                                              'list': [{'tips': 'number'}]})  # keys and types only
+        self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/compose', wait='complete')
+        time.sleep(0.5)
+        self.js(page, 'pick.click()')
+        picker = self.context('/picker.html')
+        self.wait(picker, "[...document.querySelectorAll('h2 button')].some(b => b.textContent === 'Attach all 2')")
+        self.js(picker, "[...document.querySelectorAll('h2 button')].find(b => b.textContent === 'Attach all 2').click()")
+        self.assertEqual(self.wait(page, "document.title.startsWith('got') && document.title"), 'got SFW 1.mp4,SFW 2.mp4 CLIP-ONE')
+        card = "document.getElementById('post-helper-card').shadowRoot"
+        captions = self.js(page, f"{card}.querySelector('[data-copy]').dataset.copy")
+        self.assertEqual(captions, 'SFW 1\n---\nSFW 2')  # FBuddy "Paste texts" format, in clip order
+        self.assertEqual(self.js(page, f"{card}.querySelector('[data-act=posted]').textContent"), 'I posted all 2')
+        self.js(page, f"{card}.querySelector('[data-act=posted]').click()")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and self.app.db.execute('SELECT COUNT(*) FROM posts').fetchone()[0] < 2:
+            time.sleep(0.3)
+        time.sleep(1)
+        self.assertEqual(self.app.db.execute('SELECT COUNT(*) FROM posts').fetchone()[0], 2)  # each logged once
 
+    def test_watcher_links_new_posts_and_tracks_own_post_numbers(self):
+        page = self.bidi.call('browsingContext.create', type='tab')['context']
+        self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/compose', wait='complete')
+        time.sleep(0.5)
+        self.js(page, 'pick.click()')
+        picker = self.context('/picker.html')
+        self.wait(picker, "document.querySelectorAll('.tile').length >= 2")
+        self.js(picker, "document.querySelector('.tile').click()")  # planned SFW 1
+        self.wait(page, "document.title.startsWith('got')")
+        self.js(page, 'post.click()')  # the creator posts; the site answers with the new post's ID
+        fp = self.app.db.execute("SELECT fp FROM clips WHERE name='SFW 1.mp4'").fetchone()[0]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not self.app.db.execute('SELECT 1 FROM site_posts WHERE fp=?', (fp,)).fetchone():
+            time.sleep(0.3)
+        for visit in (1, 2):  # opening the profile again updates the numbers
+            self.bidi.call('browsingContext.navigate', context=page, url=self.site + '/profile', wait='complete')
+            likes = int(self.wait(page, "document.title.startsWith('seen') && document.title").split()[1])
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                totals, posts = self.app.detail(fp)['totals'], self.app.detail(fp)['site_posts']
+                if totals.get('likeCount') == likes:
+                    break
+                time.sleep(0.3)
+            self.assertEqual(totals, {'likeCount': likes, 'tipAmount': 200})
+        self.assertEqual([p['post_id'] for p in posts], ['900'])
+        ids = {r[0] for r in self.app.db.execute('SELECT post_id FROM site_posts')}
+        self.assertEqual(ids, {'900'})  # not someone else's post, never the message thread
+        shapes = json.loads(self.js(self.panel, "browser.storage.local.get('shapes').then(r => JSON.stringify(r.shapes))"))
+        self.assertIn('/api/v1/timelinenew/{id}', shapes)
+        self.assertEqual(shapes['/api/v1/timelinenew/{id}']['response']['posts'][0]['likeCount'], 'number')
+        self.assertNotIn('/api/v1/messages/stats', shapes)
+        self.assertNotIn('DM-SECRET', json.dumps(shapes))
 
 if __name__ == '__main__':
     unittest.main()

@@ -61,7 +61,8 @@ class ApiTests(unittest.TestCase):
         self.assertTrue((Path(created['path']) / 'batch.json').exists())
         picker = self.call('GET', '/api/helper/clips?platform=Fansly')[1]
         self.assertEqual(len(picker['planned']), 2)
-        self.assertEqual(picker['batch']['name'], created['name'])
+        self.assertEqual(picker['batches'][0]['name'], created['name'])
+        self.assertEqual([i['caption'] for i in picker['batches'][0]['items']], [p['caption'] for p in picker['planned']])
         first = picker['planned'][0]
         self.assertEqual(self.call('GET', '/file/' + first['fp'])[1], (self.folder / first['name']).read_bytes())
         self.assertTrue(self.call('POST', '/api/posted', {'platform': 'Fansly', 'fp': first['fp'],

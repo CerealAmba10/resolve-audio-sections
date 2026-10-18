@@ -1,4 +1,4 @@
-// Opera GX-style uploads: clicking the site's upload button opens a picker of Clip Organizer clips instead of the
+// Opera GX-style uploads: clicking the site's upload button opens a picker of Ducky’s Clip Organizer clips instead of the
 // file dialog (hold Shift for the normal dialog). Picking fills the site's own form; the creator clicks Post.
 (() => {
   const platform = platformFor(location.href);
@@ -80,15 +80,21 @@
     el.dispatchEvent(new Event('input', {bubbles: true}));
   }
 
-  function attach(files) {
+  const TYPES = {mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska',
+                 jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp'};
+
+  async function attach(clips) {
     const transfer = new DataTransfer();
-    for (const f of files) transfer.items.add(new File([f.bytes], f.name, {type: f.type}));
+    for (const clip of clips) {
+      const blob = await (await app('/file/' + clip.fp)).blob();
+      transfer.items.add(new File([blob], clip.name, {type: TYPES[clip.name.split('.').pop().toLowerCase()] || ''}));
+    }
     target.files = transfer.files;
     target.dispatchEvent(new Event('input', {bubbles: true}));
     target.dispatchEvent(new Event('change', {bubbles: true}));
   }
 
-  browser.runtime.onMessage.addListener(message => {
+  browser.runtime.onMessage.addListener(async message => {
     if (message.type === 'close-picker') closePicker();
     if (message.type === 'browse') {
       closePicker();
@@ -96,9 +102,18 @@
       target && target.click();
     }
     if (message.type === 'attach' && target) {
+      try {
+        await attach(message.clips);
+      } catch (e) {
+        closePicker();
+        current = {clips: message.clips, planned: null, failed: true};
+        renderCard('Those clips could not be loaded. Is Ducky’s Clip Organizer still open?');
+        return;
+      }
       closePicker();
-      attach(message.files);
-      let note = message.files.length === 1 ? 'Clip attached.' : `${message.files.length} clips attached.`;
+      browser.runtime.sendMessage({type: 'expect-posts', clips: message.clips.map(c => ({fp: c.fp}))});
+      const count = message.clips.length;
+      let note = count === 1 ? 'Clip attached.' : `${count} clips attached.`;
       if (message.planned) {
         const field = captionField();
         if (field) {
@@ -106,8 +121,10 @@
           note += ' Caption filled.';
         } else note += ' Use Copy for the caption once its box appears.';
       }
-      current = {...message.clip, planned: message.planned};
-      renderCard(note + " Check everything, then click the site's Post button.");
+      current = {clips: message.clips, planned: message.planned, bulk: message.bulk};
+      renderCard(note + (message.bulk && platform === 'Fansly'
+        ? ' Using FBuddy Bulk Posts? Paste the captions with "Paste texts" and keep Sequential order.'
+        : " Check everything, then click the site's Post button."));
     }
   });
 
@@ -120,8 +137,12 @@
       return;
     }
     const planned = current.planned;
+    const many = current.clips.length > 1;
+    // FBuddy "Paste texts" format: captions separated by a line containing only ---, in clip order.
+    const captions = current.clips.map(c => c.caption || c.name.replace(/\.[^.]+$/, '')).join('\n---\n');
     const rows = planned ? [['post at', planned.at], ['caption', planned.caption],
-      ...SHOWN.filter(k => planned.options[k] !== undefined && planned.options[k] !== '').map(k => [k.replace('_', ' '), planned.options[k]])] : [];
+      ...SHOWN.filter(k => planned.options[k] !== undefined && planned.options[k] !== '').map(k => [k.replace('_', ' '), planned.options[k]])]
+      : many ? [['captions', `${current.clips.length} captions, in clip order`, captions]] : [];
     cardRoot.innerHTML = `<style>
       :host { all: initial; position: fixed; right: 16px; bottom: 16px; z-index: 2147483645; }
       .card { font: 13px/1.45 "Segoe UI", system-ui, sans-serif; color: #f2eee8; background: #211e1b; border: 1px solid #3b3631;
@@ -136,9 +157,11 @@
       .primary:hover { background: #f5c25e; }
       .actions { display: flex; gap: 8px; margin-top: 10px; }
       .note { margin-top: 10px; color: #c9c1b6; }
-    </style><div class="card"><div class="title"><span>${esc(current.name)}</span><span>${esc(platform)}</span></div>
-      ${rows.map(([k, v]) => `<div class="row"><b>${esc(k)}</b><span>${esc(v)}</span><button data-copy="${esc(v)}">Copy</button></div>`).join('')}
-      <div class="actions"><button class="primary" data-act="posted">I posted it</button><button data-act="dismiss">Not posted</button></div>
+    </style><div class="card"><div class="title"><span>${esc(many ? `${current.clips.length} clips` : current.clips[0].name)}</span>
+      <span>${esc(platform)}</span></div>
+      ${rows.map(([k, v, copy]) => `<div class="row"><b>${esc(k)}</b><span>${esc(v)}</span><button data-copy="${esc(copy ?? v)}">Copy</button></div>`).join('')}
+      <div class="actions">${current.failed ? '' : `<button class="primary" data-act="posted">${many ? `I posted all ${current.clips.length}` : 'I posted it'}</button>`}
+        <button data-act="dismiss">Not posted</button></div>
       <div class="note">${esc(note)}</div></div>`;
     if (!card.isConnected) document.documentElement.appendChild(card);
   }
@@ -152,10 +175,10 @@
       return;
     }
     if (button.dataset.act === 'posted') {
-      const result = await browser.runtime.sendMessage({type: 'posted', platform, fp: current.fp});
+      const result = await browser.runtime.sendMessage({type: 'posted', platform, fps: current.clips.map(c => c.fp)});
       current = null;
       renderCard();
-      if (result && result.waiting) console.info('Post Helper: Clip Organizer is closed; the post is logged when it opens.');
+      if (result && result.waiting) console.info('Post Helper: Ducky’s Clip Organizer is closed; the post is logged when it opens.');
     }
     if (button.dataset.act === 'dismiss') {
       current = null;

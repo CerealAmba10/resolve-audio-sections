@@ -1,4 +1,4 @@
-"""Clip Organizer: local app serving the library dashboard at http://127.0.0.1:47833 and the clip picker
+"""Ducky’s Clip Organizer: local app serving the library dashboard at http://127.0.0.1:47833 and the clip picker
 data Post Helper uses. Everything stays on this computer; the only outside request is the GitHub
 update check."""
 import hashlib
@@ -21,7 +21,7 @@ import library
 VERSION = '1.0.0'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
-ASSET = 'ClipOrganizer.exe'
+ASSET = 'DuckysClipOrganizer.exe'
 HELPER_SITES = ('Fansly', 'RedGifs', 'Pornhub Shorts')
 UI = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'ui'
 STATIC = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
@@ -114,7 +114,7 @@ class App:
         for f in self.db.execute('SELECT * FROM folders ORDER BY added'):
             rows = self.clip_rows(f['path'])
             folders.append(dict(path=f['path'], name=Path(f['path']).name, prefix=f['prefix'], count=len(rows),
-                                fresh=sum(r['status'] == 'fresh' for r in rows)))
+                                fresh=sum(r['status'] == 'fresh' for r in rows), autosort=bool(f['autosort'])))
         seen = self.helper_seen and (datetime.now() - self.helper_seen).total_seconds() < 600
         return dict(version=VERSION, folders=folders, helper=bool(seen), release=self.release, ffmpeg=self.ffmpeg)
 
@@ -126,8 +126,9 @@ class App:
         batches = [dict(r) for r in self.db.execute("""SELECT b.path, b.created FROM batch_items i JOIN batches b
             ON b.id=i.batch WHERE i.fp=? ORDER BY b.created DESC""", (fp,))]
         planned = [dict(r) for r in self.db.execute('SELECT platform, at, done FROM planned WHERE fp=? ORDER BY at', (fp,))]
+        totals, site_posts = library.clip_totals(self.db, fp)
         return dict(fp=fp, name=clip['name'], folder=clip['folder'], size=clip['size'], posts=posts, batches=batches,
-                    planned=planned)
+                    planned=planned, totals=totals, site_posts=site_posts)
 
     def activity(self):
         today = datetime.now().date()
@@ -139,25 +140,36 @@ class App:
                 weeks[index]['platforms'][row['platform']] = weeks[index]['platforms'].get(row['platform'], 0) + 1
         recent = [dict(r) for r in self.db.execute("""SELECT p.platform, p.at, p.source, c.name, c.fp FROM posts p
             LEFT JOIN clips c ON c.fp=p.fp ORDER BY p.at DESC LIMIT 40""")]
-        return dict(weeks=weeks, recent=recent)
+        watched = []
+        for r in self.db.execute("""SELECT s.*, c.name FROM site_posts s LEFT JOIN clips c ON c.fp=s.fp
+                WHERE s.counters IS NOT NULL ORDER BY s.created DESC, s.updated DESC LIMIT 100"""):
+            watched.append(dict(platform=r['platform'], post_id=r['post_id'], created=r['created'], updated=r['updated'],
+                                name=r['name'], fp=r['fp'], counters=json.loads(r['counters'] or '{}'),
+                                url=library.post_url(r['platform'], r['post_id'])))
+        return dict(weeks=weeks, recent=recent, watched=watched)
 
     def picker(self, platform):
-        """What Post Helper's picker shows on a site: planned posts, the newest batch, then the library."""
+        """What Post Helper's picker shows on a site: planned posts, recent batches (attachable in one go), the library."""
         planned = [dict(r) for r in self.db.execute("""SELECT p.id, p.fp, p.at, p.caption, p.options, c.name FROM planned p
             JOIN clips c ON c.fp=p.fp WHERE p.platform=? AND p.done=0 ORDER BY p.at LIMIT 40""", (platform,))]
         for item in planned:
             item['options'] = json.loads(item['options'] or '{}')
-        batch = self.db.execute('SELECT id, path FROM batches ORDER BY created DESC, id DESC LIMIT 1').fetchone()
-        batch_items = [dict(r) for r in self.db.execute('SELECT fp, name FROM batch_items WHERE batch=?', (batch['id'],))] \
-            if batch else []
+            item['name'] = Path(item['name']).name
+        batches = []
+        for batch in self.db.execute('SELECT id, path FROM batches ORDER BY created DESC, id DESC LIMIT 5').fetchall():
+            captions = {r['fp']: r['caption'] for r in self.db.execute(
+                'SELECT fp, caption FROM planned WHERE batch=? AND platform=?', (batch['id'], platform))}
+            # Every clip gets a caption (its name if none was planned) so bulk captions stay in step with the clips.
+            items = [dict(fp=r['fp'], name=r['name'], caption=captions.get(r['fp']) or Path(r['name']).stem)
+                     for r in self.db.execute('SELECT fp, name FROM batch_items WHERE batch=? ORDER BY rowid', (batch['id'],))]
+            batches.append(dict(name=Path(batch['path']).name, items=items))
         posted = {r['fp']: r['n'] for r in self.db.execute('SELECT fp, COUNT(*) n FROM posts WHERE platform=? GROUP BY fp',
                                                            (platform,))}
-        clips = [dict(fp=r['fp'], name=r['name']) for r in self.db.execute(
+        clips = [dict(fp=r['fp'], name=Path(r['name']).name) for r in self.db.execute(
             'SELECT fp, name FROM clips WHERE missing=0 ORDER BY mtime DESC LIMIT 200')]
-        for item in planned + batch_items + clips:
+        for item in planned + [i for b in batches for i in b['items']] + clips:
             item['posted'] = posted.get(item['fp'], 0)
-        return dict(platform=platform, planned=planned, batch=dict(name=Path(batch['path']).name if batch else None,
-                                                                   items=batch_items), library=clips)
+        return dict(platform=platform, planned=planned, batches=batches, library=clips)
 
     def file_path(self, fp):
         clip = self.db.execute('SELECT folder, name FROM clips WHERE fp=?', (fp,)).fetchone()
@@ -182,20 +194,33 @@ class App:
                 return dict(cancelled=True)
             if not Path(folder).is_dir():
                 raise ValueError('That folder does not exist.')
-            return dict(path=str(Path(folder).resolve()), count=library.scan(self.db, folder))
+            return dict(path=str(Path(folder).resolve()), count=library.sync(self.db, folder))
         if path == '/api/folders/remove':
             self.db.execute('DELETE FROM folders WHERE path=?', (body['path'],))
             self.db.commit()
             return dict(ok=True)
         if path == '/api/scan':
-            return dict(count=library.scan(self.db, self.known(body['folder'])))
+            return dict(count=library.sync(self.db, self.known(body['folder'])))
         if path == '/api/rename':
             folder = self.known(body['folder'])
-            plan = library.rename_plan(folder, body['prefix'])
+            pattern = body['prefix']
+            # "SFW" numbers files oldest first; a pattern with {N}, {DATE} or {NAME} keeps each file's own number/date.
+            skip = library.batch_dirs(self.db, folder)
+            plan, notes = library.template_plan(folder, pattern, skip) if library.TOKEN.search(pattern) \
+                else (library.rename_plan(folder, pattern, skip), [])
             if body.get('apply'):
                 library.apply_renames(self.db, folder, plan)
-                self.db.execute('UPDATE folders SET prefix=? WHERE path=?', (body['prefix'].strip(), folder))
+                self.db.execute('UPDATE folders SET prefix=? WHERE path=?', (pattern.strip(), folder))
                 self.db.commit()
+            return dict(plan=plan, notes=notes, applied=bool(body.get('apply')))
+        if path == '/api/sort':
+            folder = self.known(body['folder'])
+            if 'autosort' in body:
+                self.db.execute('UPDATE folders SET autosort=? WHERE path=?', (int(bool(body['autosort'])), folder))
+                self.db.commit()
+            plan = library.sort_plan(folder, library.batch_dirs(self.db, folder))
+            if body.get('apply'):
+                library.apply_renames(self.db, folder, plan)
             return dict(plan=plan, applied=bool(body.get('apply')))
         if path == '/api/batch/preview':
             self.known(body['folder'])
@@ -216,6 +241,13 @@ class App:
             ok = library.record_post(self.db, body['platform'], name=body.get('name'), fp=body.get('fp'),
                                      at=body.get('at'), source=body.get('source', 'manual'))
             return dict(ok=ok)
+        if path == '/api/watch':
+            # The creator's own posts as read by Post Helper from pages the site already loaded.
+            self.helper_seen = datetime.now()
+            return dict(saved=library.record_site_posts(self.db, body['platform'], body['posts'][:500]))
+        if path == '/api/link':
+            library.link_post(self.db, body['platform'], body['post_id'], body['fp'])
+            return dict(ok=True)
         if path == '/api/open':
             target = Path(body['path'])
             known = {r[0] for r in self.db.execute('SELECT path FROM folders UNION SELECT path FROM batches')}
@@ -224,7 +256,10 @@ class App:
             os.startfile(target)
             return dict(ok=True)
         if path == '/api/update':
-            self.release = latest_release()
+            try:
+                self.release = latest_release()  # the only time the app goes online, and only when asked
+            except OSError:
+                raise ValueError("Couldn't reach GitHub to check for updates. Everything else works offline.") from None
             if body.get('install') and self.release['available']:
                 install_update(self.release, server)
                 return dict(installing=True)
@@ -335,6 +370,21 @@ def make_handler(app):
     return Handler
 
 
+def keep_synced(app, every=300):
+    """Rescan every library folder now and every few minutes, so auto-sort files new clips on its own."""
+    def loop():
+        while True:
+            with app.lock:
+                for row in app.db.execute('SELECT path FROM folders').fetchall():
+                    try:
+                        if Path(row['path']).is_dir():
+                            library.sync(app.db, row['path'])
+                    except OSError:
+                        pass  # a file in use or a drive that went away: try again next time
+            time.sleep(every)
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def serve(app, port=PORT):
     return ThreadingHTTPServer(('127.0.0.1', port), make_handler(app))
 
@@ -347,10 +397,12 @@ def main():
         except OSError:
             pass
     try:
-        server = serve(App(probe=probe_cached()))
+        app = App(probe=probe_cached())
+        server = serve(app)
     except OSError:
         webbrowser.open(f'http://127.0.0.1:{PORT}/')  # already running: just show it
         return
+    keep_synced(app)
     webbrowser.open(f'http://127.0.0.1:{PORT}/')
     server.serve_forever()
 

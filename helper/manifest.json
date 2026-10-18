@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Post Helper",
   "version": "2.0",
-  "description": "Opens your Clip Organizer clips when you upload on Fansly, RedGifs or Pornhub, fills the caption, and logs what you post. You click Post yourself. Nothing leaves your computer.",
+  "description": "Opens your Ducky’s Clip Organizer clips when you upload on Fansly, RedGifs or Pornhub, fills the caption, and keeps track of how your Fansly posts do. You click Post yourself. Nothing leaves your computer.",
   "browser_specific_settings": {
     "gecko": {
       "id": "post-helper@audio-sections",
@@ -11,7 +11,6 @@
   },
   "permissions": [
     "storage",
-    "unlimitedStorage",
     "clipboardWrite",
     "webRequest",
     "webRequestBlocking",
@@ -23,7 +22,7 @@
       "sites.js",
       "store.js",
       "background.js",
-      "stats-capture.js"
+      "watcher.js"
     ]
   },
   "content_scripts": [
@@ -35,6 +34,7 @@
       ],
       "js": [
         "sites.js",
+        "store.js",
         "content.js"
       ],
       "run_at": "document_idle"
