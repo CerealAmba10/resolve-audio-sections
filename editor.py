@@ -522,7 +522,8 @@ class Editor:
         if action == 'cuts':
             self.busy = True
             self.status.set('Making the cuts timeline in Resolve…')
-            return self.send(dict(action='cuts', clips=[dict(first=j['first'], last=j['last']) for j in jobs]),
+            return self.send(dict(action='cuts', teaser=teaser_frames,
+                                  clips=[dict(first=j['first'], last=j['last']) for j in jobs]),
                              record=dict(stem=stem, output=str(folder), teaser_frames=teaser_frames,
                                          fade=self.setting('fade'), clip_fade=self.setting('clip_fade')))
         roles = dict(self.settings.get('roles', {}))

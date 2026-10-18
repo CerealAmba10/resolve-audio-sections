@@ -43,7 +43,7 @@ project = {GetName=function() return 'P' end, IsRenderingInProgress=function() l
     GetRenderJobStatus=function() return {JobStatus='Complete', CompletionPercentage=100} end}
 resolve = {GetProjectManager=function() return {GetCurrentProject=function() return project end,
     SaveProject=function() return true end} end}
-appended, colors, linked, video_tracks = {}, {}, {}, 1
+appended, colors, linked, markers, video_tracks = {}, {}, {}, {}, 1
 timelines = {{GetName=function() return 'Edit (cuts)' end}}
 cut_items = {video={}, audio={}}
 cuts = {GetName=function() return created end, GetStartFrame=function() return 86400 end, GetEndFrame=function() return 90721 end,
@@ -52,7 +52,8 @@ cuts = {GetName=function() return created end, GetStartFrame=function() return 8
     GetItemListInTrack=function(self, kind, i) return (cut_items[kind][i] or {}) end,
     AddTrack=function(self, kind) if kind == 'video' then video_tracks = video_tracks + 1 end; return true end,
     GetTrackSubType=function() return 'stereo' end,
-    SetClipsLinked=function(self, items, on) table.insert(linked, #items); return true end}
+    SetClipsLinked=function(self, items, on) table.insert(linked, #items); return true end,
+    AddMarker=function(self, frame, color, name) table.insert(markers, frame); return true end}
 pool = {CreateEmptyTimeline=function(self, name) created = name; table.insert(timelines, cuts); return cuts end,
     AppendToTimeline=function(self, infos)
         local info = infos[1]
@@ -131,7 +132,7 @@ class BridgeTest(unittest.TestCase):
             if last and last.get('seq') and (not results or results[-1] != last):
                 results.append(last)
             if not results:
-                write_state(home, request['id'], 'ready', seq=1, action='cuts',
+                write_state(home, request['id'], 'ready', seq=1, action='cuts', teaser=720,
                             clips=[dict(first=600, last=1199), dict(first=2000, last=2999)])
             elif len(results) == 1:
                 write_state(home, request['id'], 'ready', seq=2, action='pieces', timeline=results[0]['timeline'])
@@ -149,6 +150,8 @@ class BridgeTest(unittest.TestCase):
                           (1, 1, 2000, 3000, 88400), (2, 1, 2000, 3000, 88400), (2, 2, 2000, 3000, 88400)])
         self.assertEqual(list(g.colors.values()), ['Teal'] * 3 + ['Orange'] * 3)
         self.assertEqual(list(g.linked.values()), [3, 3])          # each clip's video + audio linked
+        # Teaser-end marker 720 frames into the 1000-frame clip only (the 600-frame clip is shorter than a teaser).
+        self.assertEqual(list(g.markers.values()), [2720])
         self.assertEqual(g.video_tracks, 2)
         self.assertEqual([dict(x) if not isinstance(x, dict) else x for x in results[1]['pieces']],
                          [{'start': 87000, 'end': 87600}, {'start': 88400, 'end': 89400}])

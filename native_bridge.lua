@@ -121,7 +121,7 @@ end
 -- Rebuild the chosen clips as separate pieces on a new timeline, each track at its original position,
 -- so they can be watched, bladed, merged (delete the through edit) or deleted in Resolve before rendering.
 -- Pieces are plain media: effects and transforms on the source items are not copied.
-local function build_cuts(p, source, clips)
+local function build_cuts(p, source, clips, teaser)
     local pool = p:GetMediaPool()
     local names = {}
     for i = 1, p:GetTimelineCount() do names[p:GetTimelineByIndex(i):GetName()] = true end
@@ -174,6 +174,11 @@ local function build_cuts(p, source, clips)
             end
             -- One clip's video and audio pieces move, blade and delete together.
             if #group > 1 then call(cuts, 'SetClipsLinked', group, true) end
+            -- Where the teaser ends by default; drag it to change that clip's teaser. Pieces keep their
+            -- source positions, so the clip starts clip.first frames into the cuts timeline.
+            if teaser and clip.last - clip.first + 1 > teaser then
+                call(cuts, 'AddMarker', clip.first + teaser, 'Blue', 'Teaser end', 'Drag to change where this teaser ends.', 1)
+            end
         end
         assert(placed > 0, 'No clips were placed on the cuts timeline.')
     end)
@@ -243,7 +248,7 @@ local function run()
             local done, result = pcall(function()
                 if state.action == 'cuts' then
                     assert(fingerprint(timeline) == before, 'The timeline was edited after scanning. Run Audio Sections again.')
-                    local name = build_cuts(p, timeline, state.clips)
+                    local name = build_cuts(p, timeline, state.clips, state.teaser)
                     return {status = 'cuts_ready', timeline = name, start = find(name):GetStartFrame(),
                         message = 'Made "' .. name .. '".'}
                 end

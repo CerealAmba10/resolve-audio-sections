@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7
+
+- Make cuts in Resolve places a blue "Teaser end" marker at the teaser length (30 s) into every clip
+  longer than that, so the default teaser end is visible and can be dragged.
+
 ## 1.6
 
 - A timeline marker inside a clip on the cuts timeline ends that clip's teaser (no marker: first 30 s).

@@ -46,9 +46,9 @@ shortcut named **Audio Sections**.
 timeline, "<name> (cuts)", is built with every clip as separate pieces at its original position,
 colored alternately, each clip's video and audio linked so they blade and move together. The
 Audio Sections window stays open. Edit the cuts timeline in Resolve: blade to cut a clip further,
-delete a through edit to merge two pieces, delete a piece to skip it, and add a timeline marker
-(M, with no clip selected) inside a clip to end that clip's teaser there (no marker: the first
-30 seconds). Then click **Load edits
+delete a through edit to merge two pieces, delete a piece to skip it, and move the blue "Teaser end"
+marker placed 30 seconds into each clip to change where that clip's teaser ends (delete it, or
+add your own timeline marker with M and no clip selected; no marker means the first 30 seconds). Then click **Load edits
 from Resolve**: the preview and list show exactly your pieces, and **Render** renders them from
 the cuts timeline. Changing a setting goes back to automatic cuts (Load edits brings yours back);
 **Make cuts in Resolve** again builds a fresh cuts timeline. Running Audio Sections later on a
