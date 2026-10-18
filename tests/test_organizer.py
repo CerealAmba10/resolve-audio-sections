@@ -75,6 +75,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(sum(w['platforms'].get('Fansly', 0) for w in self.call('GET', '/api/activity')[1]['weeks']), 1)
         self.assertEqual(self.call('GET', '/file/' + first['fp'], headers={organizer.HEADER: ''})[0], 403)
 
+    def test_save_site_settings(self):
+        from unittest.mock import patch
+        import scheduler
+        with tempfile.TemporaryDirectory() as home, patch.object(scheduler, 'HOME', Path(home)):
+            status, saved = self.call('POST', '/api/settings', {'site': 'Pornhub Shorts', 'values': {
+                'tags': 'vtuber, cosplay', 'categories': 'Anime, Cosplay', 'who': 'Solo/Animation', 'private': True,
+                'max_seconds': '0', 'enabled': False, 'bogus': 1}})
+            self.assertEqual(status, 200)
+            self.assertEqual((saved['settings']['tags'], saved['settings']['max_seconds'], saved['settings']['private']),
+                             ('vtuber, cosplay', 0, True))
+            sites = self.call('GET', '/api/settings')[1]['sites']
+            self.assertEqual(sites['Pornhub Shorts']['categories'], 'Anime, Cosplay')
+            self.assertNotIn('bogus', json.loads((Path(home) / 'settings.json').read_text())['Pornhub Shorts'])
+            status, body = self.call('POST', '/api/settings', {'site': 'RedGifs', 'values': {'times': 'noon'}})
+            self.assertEqual(status, 400)
+            self.assertEqual(json.loads((Path(home) / 'settings.json').read_text()).get('RedGifs'), None)  # nothing saved
+
 
 class UpdateTests(unittest.TestCase):
     def test_release_check_and_checksum_guard(self):

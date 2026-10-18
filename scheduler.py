@@ -21,10 +21,15 @@ COMMON = dict(enabled=False, clip='teaser', max_seconds=0, max_mb=0, vertical=Fa
 DEFAULTS = {
     'Fansly': {**COMMON, 'enabled': True, 'clip': 'full', 'times': '12:00, 20:00', 'url': 'https://fansly.com/',
                'audience': 'subscribers', 'price': 0.0},
+    # RedGifs upload wizard: audience (Straight, Gay, Lesbian, Trans, Bisexual or Animated), tags, niches, private.
     'RedGifs': {**COMMON, 'enabled': True, 'max_seconds': 60, 'times': '14:00', 'caption': '{name}',
-                'url': 'https://www.redgifs.com/', 'niches': '', 'keep_audio': True, 'public': True},
+                'url': 'https://www.redgifs.com/create', 'audience': 'Straight', 'niches': '', 'keep_audio': True,
+                'private': False},
+    # Pornhub uploader: the caption is the video title; it needs 2-16 tags and 2-8 categories (from its list).
+    # who: "Performer(s)" or "Solo/Animation".
     'Pornhub Shorts': {**COMMON, 'enabled': True, 'max_seconds': 60, 'vertical': True, 'times': '16:00',
-                       'caption': '{name}', 'url': 'https://www.pornhub.com/', 'categories': '', 'private': False},
+                       'caption': '{name}', 'url': 'https://pornhub.mainhub.com/upload/uploader', 'categories': '',
+                       'who': '', 'private': False, 'min_tags': 2, 'min_categories': 2},
     'Instagram': {**COMMON, 'max_seconds': 180, 'vertical': True, 'nsfw': False, 'times': '18:00',
                   'url': 'https://www.instagram.com/'},
     'TikTok': {**COMMON, 'max_seconds': 600, 'vertical': True, 'nsfw': False, 'times': '17:00',
@@ -52,9 +57,17 @@ def clip_kind(path):
     return 'teaser' if re.search(r' \d+T$', Path(path).stem) else 'full'
 
 
+def split_list(text):
+    """'amateur, cosplay,  #pov' -> ['amateur', 'cosplay', 'pov']"""
+    return [t.strip().lstrip('#') for t in str(text).split(',') if t.strip().lstrip('#')]
+
+
 def problems(settings, path, info, size):
     """Reasons a clip does not fit a platform. info: probe_media dict or None."""
     found = []
+    for field, minimum in (('tags', settings.get('min_tags', 0)), ('categories', settings.get('min_categories', 0))):
+        if minimum and len(split_list(settings.get(field, ''))) < minimum:
+            found.append(f'the site needs at least {minimum} {field}: add them in Settings')
     if settings['clip'] != 'any' and clip_kind(path) != settings['clip']:
         found.append(f"not a {settings['clip']} clip")
     if info is None:

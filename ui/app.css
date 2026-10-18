@@ -154,6 +154,12 @@ th.num, td.num { white-space: nowrap; }
 .token:hover { background: var(--raised); color: var(--ink); }
 .rename-preview p.note { color: var(--recent); padding: 8px 14px; border-bottom: 1px solid var(--line-soft); }
 .sort-title { margin-top: 36px; }
+.site-note { margin: 14px 0 18px; max-width: 75ch; }
+.site-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px 24px; max-width: 980px; }
+.site-form .field small { font-size: 12px; }
+.site-form .field.check { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 8px; color: var(--ink-2); font-size: 14px; }
+.site-form .field.check small { grid-column: 2; }
+#site-tabs button[aria-selected="true"] { background: var(--raised); color: var(--ink); }
 .check { display: flex; align-items: center; gap: 8px; margin: 12px 0 14px; color: var(--ink-2); cursor: pointer; }
 .small { font-size: 12px; }
 .hint { margin: 0; color: var(--ink-3); font-size: 13px; }

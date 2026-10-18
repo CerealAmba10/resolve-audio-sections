@@ -121,7 +121,9 @@
           note += ' Caption filled.';
         } else note += ' Use Copy for the caption once its box appears.';
       }
-      current = {clips: message.clips, planned: message.planned, bulk: message.bulk};
+      current = {clips: message.clips, planned: message.planned, bulk: message.bulk,
+                 options: (message.planned && message.planned.options) || message.options || {}};
+      if (message.planned) current.clips = current.clips.map(c => ({...c, caption: c.caption || message.planned.caption}));
       renderCard(note + (message.bulk && platform === 'Fansly'
         ? ' Using FBuddy Bulk Posts? Paste the captions with "Paste texts" and keep Sequential order.'
         : " Check everything, then click the site's Post button."));
@@ -160,7 +162,8 @@
     </style><div class="card"><div class="title"><span>${esc(many ? `${current.clips.length} clips` : current.clips[0].name)}</span>
       <span>${esc(platform)}</span></div>
       ${rows.map(([k, v, copy]) => `<div class="row"><b>${esc(k)}</b><span>${esc(v)}</span><button data-copy="${esc(copy ?? v)}">Copy</button></div>`).join('')}
-      <div class="actions">${current.failed ? '' : `<button class="primary" data-act="posted">${many ? `I posted all ${current.clips.length}` : 'I posted it'}</button>`}
+      <div class="actions">${!current.failed && FILLERS[platform] ? '<button data-act="fill">Fill this page</button>' : ''}
+        ${current.failed ? '' : `<button class="primary" data-act="posted">${many ? `I posted all ${current.clips.length}` : 'I posted it'}</button>`}
         <button data-act="dismiss">Not posted</button></div>
       <div class="note">${esc(note)}</div></div>`;
     if (!card.isConnected) document.documentElement.appendChild(card);
@@ -179,6 +182,18 @@
       current = null;
       renderCard();
       if (result && result.waiting) console.info('Post Helper: Ducky’s Clip Organizer is closed; the post is logged when it opens.');
+    }
+    if (button.dataset.act === 'fill') {
+      button.disabled = true;
+      button.textContent = 'Filling…';
+      let note;
+      try {
+        note = await FILLERS[platform](current.options, current.clips);
+      } catch (e) {
+        note = 'Something on this page could not be filled: ' + e.message;
+      }
+      renderCard(note);
+      return;
     }
     if (button.dataset.act === 'dismiss') {
       current = null;

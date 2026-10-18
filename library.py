@@ -39,6 +39,8 @@ def connect(home=DATA):
         CREATE TABLE IF NOT EXISTS site_post_days(platform TEXT, post_id TEXT, day TEXT, counters TEXT,
             PRIMARY KEY(platform, post_id, day));
     """)
+    if 'url' not in {r['name'] for r in db.execute('PRAGMA table_info(site_posts)')}:
+        db.execute('ALTER TABLE site_posts ADD COLUMN url TEXT')
     if 'autosort' not in {r['name'] for r in db.execute('PRAGMA table_info(folders)')}:
         db.execute('ALTER TABLE folders ADD COLUMN autosort INTEGER DEFAULT 0')
     return db
@@ -318,15 +320,16 @@ def record_post(db, platform, name=None, fp=None, at=None, source='manual'):
 POST_URLS = {'Fansly': 'https://fansly.com/post/{id}'}  # add RedGifs/Pornhub once their post pages are known
 
 
-def post_url(platform, post_id):
+def post_url(platform, post_id, saved=None):
     template = POST_URLS.get(platform)
-    return template.format(id=post_id) if template else None
+    return saved or (template.format(id=post_id) if template else None)
 
 
-def link_post(db, platform, post_id, fp):
-    """Tie a site post to the clip Post Helper attached to it."""
-    db.execute("""INSERT INTO site_posts(platform, post_id, fp) VALUES(?, ?, ?)
-        ON CONFLICT(platform, post_id) DO UPDATE SET fp=excluded.fp""", (platform, str(post_id), fp))
+def link_post(db, platform, post_id, fp, url=None):
+    """Tie a site post (and its address, when the site gave one) to the clip Post Helper attached to it."""
+    db.execute("""INSERT INTO site_posts(platform, post_id, fp, url) VALUES(?, ?, ?, ?)
+        ON CONFLICT(platform, post_id) DO UPDATE SET fp=excluded.fp, url=COALESCE(excluded.url, url)""",
+               (platform, str(post_id), fp, url))
     db.commit()
 
 
@@ -353,7 +356,7 @@ def clip_totals(db, fp):
     for row in db.execute('SELECT * FROM site_posts WHERE fp=? ORDER BY created DESC', (fp,)):
         counters = json.loads(row['counters'] or '{}')
         posts.append(dict(platform=row['platform'], post_id=row['post_id'], created=row['created'],
-                          counters=counters, updated=row['updated'], url=post_url(row['platform'], row['post_id'])))
+                          counters=counters, updated=row['updated'], url=post_url(row['platform'], row['post_id'], row['url'])))
         for k, v in counters.items():
             totals[k] = totals.get(k, 0) + v
     return totals, posts
@@ -373,15 +376,56 @@ def thumbnail(fp, source, cache):
     return out if out.exists() else None
 
 
-def helper_batch(db, batch, target, platforms, now, probe):
-    """batch.json for Post Helper, using the planner's per-site settings and daily posting times."""
-    from scheduler import DEFAULTS, HOME, plan
+def platform_settings(platforms):
+    """The planner's per-site settings (defaults plus anything changed in its Settings window)."""
+    from scheduler import DEFAULTS, HOME
     try:
         saved = json.loads((HOME / 'settings.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
         saved = {}
-    settings = {name: {**DEFAULTS[name], **{k: v for k, v in saved.get(name, {}).items() if k in DEFAULTS[name]},
-                       'enabled': True} for name in platforms}
+    return {name: {**DEFAULTS[name], **{k: v for k, v in saved.get(name, {}).items() if k in DEFAULTS[name]},
+                   'enabled': True} for name in platforms if name in DEFAULTS}
+
+
+def save_platform_settings(site, values):
+    """Check and save one site's settings (shared with the planner's settings.json)."""
+    from scheduler import DEFAULTS, HOME, next_slots
+    if site not in DEFAULTS:
+        raise ValueError('Unknown site.')
+    clean = {}
+    for key, value in values.items():
+        if key not in DEFAULTS[site] or key == 'enabled':
+            continue
+        kind = type(DEFAULTS[site][key])
+        try:
+            clean[key] = bool(value) if kind is bool else kind(value)
+        except (TypeError, ValueError):
+            raise ValueError(f'{key.replace("_", " ")} must be a {"number" if kind in (int, float) else "text"}.') from None
+    merged = {**DEFAULTS[site], **clean}
+    if merged['clip'] not in ('teaser', 'full', 'any'):
+        raise ValueError('Clip type must be teaser, full or any.')
+    next(next_slots(merged['times'], datetime.now(), set()))  # raises if the posting times can't be read
+    try:
+        merged['caption'].format(name='', tags='')
+    except (KeyError, IndexError):
+        raise ValueError('The caption can only use {name} and {tags}.') from None
+    path = HOME / 'settings.json'
+    try:
+        saved = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        saved = {}
+    saved[site] = {**saved.get(site, {}), **clean}
+    HOME.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix('.json.tmp')
+    temp.write_text(json.dumps(saved, indent=2), encoding='utf-8')
+    os.replace(temp, path)
+    return platform_settings([site])[site]
+
+
+def helper_batch(db, batch, target, platforms, now, probe):
+    """batch.json for Post Helper, using the planner's per-site settings and daily posting times."""
+    from scheduler import plan
+    settings = platform_settings(platforms)
     taken = [dict(platform=r['platform'], at=r['at'], file='') for r in
              db.execute('SELECT platform, at FROM planned WHERE at >= ?', (now.strftime(FMT),))]
     files = [str(target / r['name']) for r in db.execute('SELECT name FROM batch_items WHERE batch=?', (batch,))]

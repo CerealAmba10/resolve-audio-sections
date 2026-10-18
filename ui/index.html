@@ -16,6 +16,7 @@
       <a href="#organize" data-view="organize">Organize</a>
       <a href="#batch" data-view="batch">Batch</a>
       <a href="#activity" data-view="activity">Activity</a>
+      <a href="#sites" data-view="sites">Sites</a>
     </nav>
     <div class="folders">
       <div class="folders-head"><span>Folders</span><button class="ghost small" id="add-folder">Add</button></div>
@@ -121,6 +122,13 @@
         <span id="batch-summary"></span>
         <button class="primary" id="create-batch" disabled>Create batch</button>
       </div>
+    </section>
+
+    <section class="view" id="view-sites" hidden>
+      <div class="segmented" role="tablist" aria-label="Site" id="site-tabs"></div>
+      <p class="hint site-note" id="site-note"></p>
+      <form class="site-form" id="site-form"></form>
+      <div class="actions"><button class="primary" id="save-site">Save</button></div>
     </section>
 
     <section class="view" id="view-activity" hidden>

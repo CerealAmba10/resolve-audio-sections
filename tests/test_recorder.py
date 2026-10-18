@@ -67,7 +67,7 @@ class RecorderExtensionTests(unittest.TestCase):
             manifest['content_scripts'][0]['matches'].append('http://127.0.0.1/*')
             (ext / 'manifest.json').write_text(json.dumps(manifest))
             sites = ext / 'sites.js'
-            sites.write_text(sites.read_text().replace("'pornhub.com'];", "'pornhub.com', '127.0.0.1'];"))
+            sites.write_text(sites.read_text().replace("'pornhub.mainhub.com'];", "'pornhub.mainhub.com', '127.0.0.1'];"))
             downloads, ext_uuid = folder / 'downloads', str(uuid.uuid4())
             downloads.mkdir()
             process, bidi = launch(folder / 'profile', prefs={

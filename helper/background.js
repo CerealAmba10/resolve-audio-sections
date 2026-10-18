@@ -1,10 +1,11 @@
 // Connects the picker and the post card on each site to Ducky’s Clip Organizer on this computer.
-let flushing = Promise.resolve(0);
-
-// One sync at a time, so overlapping calls can never log the same post twice.
-function flushPending() {
-  flushing = flushing.then(sendPending, sendPending);
-  return flushing;
+// Everything that reads or changes the waiting list runs one at a time, so overlapping posts can't overwrite
+// each other's entries and nothing is ever sent twice.
+let line = Promise.resolve();
+function inTurn(job) {
+  const result = line.then(job, job);
+  line = result.catch(() => {});
+  return result;
 }
 
 async function sendPending() {
@@ -21,11 +22,14 @@ async function sendPending() {
   return left.length;
 }
 
+const flushPending = () => inTurn(sendPending);
+
 // Things the app must not miss (posts, post-to-clip links) wait here until it's open.
-async function queue(path, body) {
-  const {pending = []} = await browser.storage.local.get('pending');
-  await browser.storage.local.set({pending: [...pending, {path, body}]});
-  return flushPending();
+function queue(...items) {
+  return inTurn(async () => {
+    const {pending = []} = await browser.storage.local.get('pending');
+    await browser.storage.local.set({pending: [...pending, ...items]});
+  }).then(flushPending);
 }
 
 browser.runtime.onMessage.addListener(async (message, sender) => {
@@ -37,7 +41,7 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
   if (message.type === 'attach') {
     // The page's content script fetches the clips itself (as file-backed Blobs, so big batches don't fill memory).
     await browser.tabs.sendMessage(tab, {type: 'attach', planned: message.planned || null, clips: message.clips,
-                                         bulk: !!message.bulk});
+                                         bulk: !!message.bulk, options: message.options || {}});
     return true;
   }
   if (message.type === 'expect-posts') {
@@ -51,10 +55,9 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
   if (message.type === 'posted') {
     const local = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
     const at = local.toISOString().slice(0, 16).replace('T', ' ');
-    const {pending = []} = await browser.storage.local.get('pending');
-    await browser.storage.local.set({pending: [...pending, ...message.fps.map(fp =>
-      ({path: '/api/posted', body: {platform: message.platform, fp, source: 'post-helper', at}}))]});
-    return {waiting: await flushPending()};
+    const waiting = await queue(...message.fps.map(fp =>
+      ({path: '/api/posted', body: {platform: message.platform, fp, source: 'post-helper', at}})));
+    return {waiting};
   }
   if (message.type === 'status') {
     try {

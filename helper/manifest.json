@@ -1,12 +1,17 @@
 {
   "manifest_version": 2,
   "name": "Post Helper",
-  "version": "2.0",
+  "version": "2.3",
   "description": "Opens your Ducky’s Clip Organizer clips when you upload on Fansly, RedGifs or Pornhub, fills the caption, and keeps track of how your Fansly posts do. You click Post yourself. Nothing leaves your computer.",
   "browser_specific_settings": {
     "gecko": {
       "id": "post-helper@audio-sections",
-      "strict_min_version": "115.0"
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   },
   "permissions": [
@@ -15,7 +20,9 @@
     "webRequest",
     "webRequestBlocking",
     "*://*.fansly.com/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "*://*.redgifs.com/*",
+    "*://pornhub.mainhub.com/*"
   ],
   "background": {
     "scripts": [
@@ -30,11 +37,13 @@
       "matches": [
         "*://*.fansly.com/*",
         "*://*.redgifs.com/*",
-        "*://*.pornhub.com/*"
+        "*://*.pornhub.com/*",
+        "*://pornhub.mainhub.com/*"
       ],
       "js": [
         "sites.js",
         "store.js",
+        "fill.js",
         "content.js"
       ],
       "run_at": "document_idle"

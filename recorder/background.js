@@ -83,7 +83,7 @@ function keep(key, part, json) {
 browser.webRequest.onBeforeRequest.addListener(d => {
   const url = new URL(d.url);
   if (!watching || !allowed(d.documentUrl || d.originUrl || d.url) || STATIC.test(url.pathname) ||
-      /messag|chat|wallet|payment|card/i.test(url.pathname) || SIGN_IN.test(url.pathname)) return;
+      /messag|chat|group|wallet|payment|card/i.test(url.pathname) || SIGN_IN.test(url.pathname)) return;
   const key = `${d.method} ${cleanUrl(d.url).replace(/^https?:\/\/[^/]+/, '').replace(/\/\d{6,}(?=\/|$)/g, '/{id}')}`;
   const body = d.requestBody;
   if (body && body.raw && body.raw[0] && body.raw[0].bytes) {

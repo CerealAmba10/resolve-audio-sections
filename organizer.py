@@ -145,7 +145,7 @@ class App:
                 WHERE s.counters IS NOT NULL ORDER BY s.created DESC, s.updated DESC LIMIT 100"""):
             watched.append(dict(platform=r['platform'], post_id=r['post_id'], created=r['created'], updated=r['updated'],
                                 name=r['name'], fp=r['fp'], counters=json.loads(r['counters'] or '{}'),
-                                url=library.post_url(r['platform'], r['post_id'])))
+                                url=library.post_url(r['platform'], r['post_id'], r['url'])))
         return dict(weeks=weeks, recent=recent, watched=watched)
 
     def picker(self, platform):
@@ -169,7 +169,8 @@ class App:
             'SELECT fp, name FROM clips WHERE missing=0 ORDER BY mtime DESC LIMIT 200')]
         for item in planned + [i for b in batches for i in b['items']] + clips:
             item['posted'] = posted.get(item['fp'], 0)
-        return dict(platform=platform, planned=planned, batches=batches, library=clips)
+        return dict(platform=platform, planned=planned, batches=batches, library=clips,
+                    options=library.platform_settings([platform]).get(platform, {}))
 
     def file_path(self, fp):
         clip = self.db.execute('SELECT folder, name FROM clips WHERE fp=?', (fp,)).fetchone()
@@ -241,12 +242,16 @@ class App:
             ok = library.record_post(self.db, body['platform'], name=body.get('name'), fp=body.get('fp'),
                                      at=body.get('at'), source=body.get('source', 'manual'))
             return dict(ok=ok)
+        if path == '/api/settings':
+            return dict(site=body['site'], settings=library.save_platform_settings(body['site'], body.get('values', {})))
         if path == '/api/watch':
             # The creator's own posts as read by Post Helper from pages the site already loaded.
             self.helper_seen = datetime.now()
             return dict(saved=library.record_site_posts(self.db, body['platform'], body['posts'][:500]))
         if path == '/api/link':
-            library.link_post(self.db, body['platform'], body['post_id'], body['fp'])
+            url = body.get('url')
+            library.link_post(self.db, body['platform'], body['post_id'], body['fp'],
+                              url if isinstance(url, str) and url.startswith('https://') else None)
             return dict(ok=True)
         if path == '/api/open':
             target = Path(body['path'])
@@ -296,6 +301,9 @@ class App:
             return self.detail(path.rsplit('/', 1)[1])
         if path == '/api/activity':
             return self.activity()
+        if path == '/api/settings':
+            from scheduler import DEFAULTS
+            return dict(sites=library.platform_settings(list(DEFAULTS)), helper=list(HELPER_SITES))
         if path == '/api/helper/clips':
             self.helper_seen = datetime.now()
             return self.picker(query.get('platform', [''])[0])

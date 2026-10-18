@@ -4,9 +4,13 @@ This shows how each site's upload page works, so posting can be set up for you. 
 have it switched on, and only on Fansly, RedGifs and Pornhub.
 
 Install
+  If you were sent a signed copy, just open the .xpi in Firefox and click Add.
+  Otherwise (an unsigned copy), double-clicking it gives "this add-on could not be installed because it has
+  not been verified". Load it this way instead, which works for unsigned add-ons:
   1. Unzip this folder.
   2. In Firefox, type  about:debugging#/runtime/this-firefox  in the address bar and press Enter.
   3. Click "Load Temporary Add-on..." and choose upload-layout-recorder.xpi. A page with these steps opens.
+     It stays until Firefox closes, which is plenty for recording.
 
 Record (once per site you use)
   1. Open the site, sign in as usual, and go to the page where you make a new post.

@@ -74,7 +74,7 @@ async function attach(clips, planned, bulk = false) {
   $('attach').textContent = 'Attaching…';
   document.body.classList.add('busy');
   try {
-    await browser.runtime.sendMessage({type: 'attach', planned, bulk,
+    await browser.runtime.sendMessage({type: 'attach', planned, bulk, options: data.options || {},
       clips: clips.map(c => ({fp: c.fp, name: c.name, caption: c.caption || ''}))});
   } catch (e) {
     document.body.classList.remove('busy');

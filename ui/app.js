@@ -56,12 +56,12 @@ const label = key => {
 /* Routing and shell */
 function view() {
   const name = location.hash.slice(1) || 'library';
-  for (const v of ['welcome', 'library', 'organize', 'batch', 'activity']) $(`view-${v}`).hidden = true;
+  for (const v of ['welcome', 'library', 'organize', 'batch', 'activity', 'sites']) $(`view-${v}`).hidden = true;
   for (const a of document.querySelectorAll('.nav a')) {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
-  const needsFolder = name !== 'activity';
+  const needsFolder = !['activity', 'sites'].includes(name);
   if (needsFolder && !state.folder) {
     $('view-welcome').hidden = false;
     $('title').textContent = 'Welcome';
@@ -71,12 +71,12 @@ function view() {
   }
   $(`view-${name}`).hidden = false;
   const folder = state.folders.find(f => f.path === state.folder);
-  $('title').textContent = name === 'activity' ? 'Activity' : folder ? folder.name : '';
-  $('folder-path').textContent = name === 'activity' || !folder ? '' : folder.path;
+  $('title').textContent = name === 'activity' ? 'Activity' : name === 'sites' ? 'Sites' : folder ? folder.name : '';
+  $('folder-path').textContent = !needsFolder || !folder ? '' : folder.path;
   $('top-actions').replaceChildren(...(name === 'library' && folder ? [
     el('button', {class: 'ghost', onclick: run(rescan)}, 'Rescan'),
     el('button', {class: 'ghost', onclick: run(() => removeFolder(folder.path))}, 'Remove from library')] : []));
-  run({library: loadLibrary, organize: loadOrganize, batch: loadBatch, activity: loadActivity}[name])();
+  run({library: loadLibrary, organize: loadOrganize, batch: loadBatch, activity: loadActivity, sites: loadSites}[name])();
 }
 
 async function refreshState() {
@@ -385,6 +385,58 @@ function showFfmpeg(status) {
   if (status === 'downloading') setTimeout(run(refreshState), 3000);
 }
 
+/* Sites: each site's posting settings, used for planning and by Post Helper's "Fill this page". */
+const FIELD_ORDER = ['tags', 'categories', 'niches', 'audience', 'who', 'private', 'caption', 'times', 'clip', 'max_seconds',
+                     'max_mb', 'vertical', 'nsfw', 'keep_audio', 'price', 'min_tags', 'min_categories', 'subreddit', 'flair', 'url'];
+const FIELD_HELP = {
+  tags: 'Separate with commas. RedGifs and Pornhub pick these on their upload page.',
+  categories: "Separate with commas; must match Pornhub's category names. Pornhub needs 2 to 8.",
+  niches: 'Separate with commas, as named on RedGifs.', audience: 'Straight, Gay, Lesbian, Trans, Bisexual or Animated.',
+  who: '"Performer(s)" or "Solo/Animation" (Pornhub), or leave empty.', caption: 'Uses {name} (the clip name) and {tags}.',
+  times: 'Daily posting times, e.g. 12:00, 20:00.', clip: 'teaser, full or any.', max_seconds: '0 means no limit.',
+  max_mb: '0 means no limit.', price: '0 means free.', url: 'The page "Open site" goes to.',
+};
+const FIELD_NAME = {who: 'Who is in it', max_seconds: 'Longest clip (seconds)', max_mb: 'Largest file (MB)', nsfw: 'NSFW',
+                    keep_audio: 'Keep audio', min_tags: 'Fewest tags', min_categories: 'Fewest categories', url: 'Upload page'};
+let siteData = null, site = null;
+
+async function loadSites() {
+  siteData = await api('/api/settings');
+  site = site || siteData.helper[0];
+  renderSites();
+}
+
+function renderSites() {
+  $('site-tabs').replaceChildren(...Object.keys(siteData.sites).map(name => el('button', {
+    role: 'tab', 'aria-selected': String(name === site), onclick: () => { site = name; renderSites(); }}, name)));
+  $('site-note').textContent = siteData.helper.includes(site)
+    ? 'Post Helper uses these when you click "Fill this page" on this site, and the planner uses the times and limits.'
+    : "This site's terms don't allow automation: these settings only shape planning and the exported captions.";
+  const values = siteData.sites[site];
+  const keys = FIELD_ORDER.filter(k => k in values).concat(Object.keys(values).filter(k => !FIELD_ORDER.includes(k) && k !== 'enabled'));
+  $('site-form').replaceChildren(...keys.map(key => {
+    const value = values[key];
+    const input = typeof value === 'boolean'
+      ? el('input', {type: 'checkbox', name: key, checked: value})
+      : el('input', {name: key, type: typeof value === 'number' ? 'number' : 'text', step: 'any', value: String(value)});
+    const title = FIELD_NAME[key] || label(key);
+    return el('label', {class: typeof value === 'boolean' ? 'field check' : 'field'},
+      typeof value === 'boolean' ? input : el('span', {}, title), typeof value === 'boolean' ? el('span', {}, title) : input,
+      FIELD_HELP[key] ? el('small', {class: 'muted'}, FIELD_HELP[key]) : null);
+  }));
+}
+
+async function saveSite() {
+  const values = {};
+  for (const input of $('site-form').querySelectorAll('input')) {
+    values[input.name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+  }
+  const result = await api('/api/settings', {site, values});
+  siteData.sites[site] = result.settings;
+  toast(`Saved ${site} settings.`);
+  renderSites();
+}
+
 /* Updates */
 function showRelease(release) {
   const box = $('update');
@@ -437,6 +489,8 @@ for (const b of document.querySelectorAll('.token')) b.onclick = () => {
 };
 $('apply-rename').onclick = run(applyRename);
 $('apply-sort').onclick = run(applySort);
+$('save-site').onclick = run(saveSite);
+$('site-form').onsubmit = e => { e.preventDefault(); run(saveSite)(); };
 $('autosort').onchange = run(async () => {
   const on = $('autosort').checked;
   await api('/api/sort', {folder: state.folder, autosort: on});

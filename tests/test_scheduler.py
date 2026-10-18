@@ -16,6 +16,10 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(problems(DEFAULTS['Fansly'], 'a 1T.mp4', info, 0), ['not a full clip'])
         self.assertEqual(problems(DEFAULTS['TikTok'], 'a 1T.mp4', info, 0), ['1920x1080 is not vertical'])
         self.assertEqual(problems(DEFAULTS['RedGifs'], 'a 1T.mp4', dict(info, duration=90), 0), ['90s > 60s'])
+        ph = dict(DEFAULTS['Pornhub Shorts'], tags='amateur', categories='amateur, cosplay')
+        tall = dict(info, width=1080, height=1920)
+        self.assertEqual(problems(ph, 'a 1T.mp4', tall, 0), ['the site needs at least 2 tags: add them in Settings'])
+        self.assertEqual(problems(dict(ph, tags='#amateur, pov'), 'a 1T.mp4', tall, 0), [])
 
     def test_slots_skip_past_and_taken(self):
         slots = next_slots('20:00, 12:00', datetime(2026, 1, 1, 13, 0), {'2026-01-01 20:00'})

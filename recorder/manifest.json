@@ -1,12 +1,17 @@
 {
   "manifest_version": 2,
   "name": "Upload Layout Recorder",
-  "version": "1.1",
+  "version": "1.4",
   "description": "Records which buttons, menus and fields you use on upload pages, and the field names (never the values) the site's pages send. Never records typed text, passwords or sign-in screens. Nothing is sent anywhere; you save a zip yourself.",
   "browser_specific_settings": {
     "gecko": {
       "id": "upload-layout-recorder@audio-sections",
-      "strict_min_version": "115.0"
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   },
   "permissions": [
@@ -28,7 +33,8 @@
       "matches": [
         "*://*.fansly.com/*",
         "*://*.redgifs.com/*",
-        "*://*.pornhub.com/*"
+        "*://*.pornhub.com/*",
+        "*://pornhub.mainhub.com/*"
       ],
       "js": [
         "content.js"

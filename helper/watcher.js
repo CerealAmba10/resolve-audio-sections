@@ -4,7 +4,14 @@
 // "data shapes" export, the creator's account ID and the IDs of posts Post Helper created.
 const WATCH_URLS = ['*://apiv3.fansly.com/api/v1/*'];
 const WATCH_PATH = /\/(timeline|post|stats|account\/me)/i;
-const CREATE_PATH = /\/api\/v1\/post\/?$/;
+// The reply each site sends when a post is created: which platform, its new ID and (if the site says) its link.
+const CREATES = [
+  {platform: 'Fansly', test: /\/api\/v1\/post\/?$/, id: json => json.response && json.response.id},
+  {platform: 'RedGifs', test: /\/v2\/gifs\/submit\/?$/, id: json => json.id,
+   url: (id) => `https://www.redgifs.com/watch/${String(id).toLowerCase()}`},
+  {platform: 'Pornhub Shorts', test: /\/uploading\/save_videodata\/?$/, id: json => json.id, url: (id, json) => json.videoUrl},
+];
+const CREATE_URLS = [...WATCH_URLS, '*://*.redgifs.com/*', '*://pornhub.mainhub.com/*'];
 const NOT_COUNTERS = /^(id|type|version|status|price)$|Id$|At$|Ids$/;
 const waiting = {};  // tab id -> clips attached on that tab, waiting for the posts they become (in order)
 
@@ -58,20 +65,28 @@ function shape(value) {
   return value === null ? 'null' : typeof value;
 }
 
+// A new post on any of the sites: link it (and its address) to the clip Post Helper attached on that tab.
 browser.webRequest.onBeforeRequest.addListener(details => {
   const path = new URL(details.url).pathname;
-  if (/\/messag/i.test(path)) return;  // never messages
-  if (details.method === 'POST' && CREATE_PATH.test(path)) {
-    readJson(details, async json => {
-      const id = json && json.response && json.response.id;
-      const clip = (waiting[details.tabId] || []).shift();
-      if (id == null || !clip) return;
+  const site = details.method === 'POST' && CREATES.find(c => c.test.test(path));
+  if (!site || !waiting[details.tabId] || !waiting[details.tabId].length) return;
+  readJson(details, async json => {
+    const id = json && site.id(json);
+    const clip = (waiting[details.tabId] || []).shift();
+    if (id == null || !clip) return;
+    await inTurn(async () => {
       const {created = []} = await browser.storage.local.get('created');
       await browser.storage.local.set({created: [...created, String(id)].slice(-2000)});
-      await queue('/api/link', {platform: 'Fansly', post_id: String(id), fp: clip.fp});
     });
-    return;
-  }
+    await queue({path: '/api/link', body: {platform: site.platform, post_id: String(id), fp: clip.fp,
+                                           url: site.url ? site.url(id, json) || null : null}});
+  });
+}, {urls: CREATE_URLS, types: ['xmlhttprequest']}, ['blocking']);
+
+browser.webRequest.onBeforeRequest.addListener(details => {
+  const path = new URL(details.url).pathname;
+  if (/\/messag|\/group/i.test(path)) return;  // never messages
+  if (details.method === 'POST') return;  // new posts are handled above
   if (details.method !== 'GET' || !WATCH_PATH.test(path)) return;
   readJson(details, async json => {
     const key = path.replace(/\/\d{6,}(?=\/|$)/g, '/{id}');
