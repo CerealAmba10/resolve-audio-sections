@@ -36,14 +36,17 @@ Post Helper
      logs it (if Ducky’s Clip Organizer is closed, the post is logged next time it opens).
   Hold Shift while clicking upload to get the normal file dialog instead.
 
-Fill this page (RedGifs and Pornhub)
-  First set each site's tags, categories, niches and so on in Ducky's Clip Organizer under Sites.
-  RedGifs: after attaching the clip, click "Fill this page" on each step (audience, tags, niches, private), then
-    click the site's Next yourself, and Publish on the last step. RedGifs has no scheduling.
-  Pornhub: attach one clip or a whole batch, then click "Fill this page": every queued video gets its title, tags
-    (at least 2), categories (2 to 8, from Pornhub's list) and the "Publish to Shorties Only" switch (on by
-    default; change it under Sites). Then set "When will this be published?" and
-    visibility, tick the certification boxes yourself, and click Submit for Review.
+Presets and auto-fill (RedGifs and Pornhub)
+  In Ducky's Clip Organizer, Sites holds presets: named sets of tags, categories, niches, captions and times for
+  each site (for example "Vtuber" or "Hentai"). Add, duplicate and edit them there. Tags are typed as chips;
+  suggestions come from the names each site has really shown on its upload page, and anything the site has never
+  suggested is marked with a dashed outline, so check its spelling.
+  Pick the preset when making a batch, or in the clip picker's Preset menu (it remembers your choice per site).
+  After a clip is attached, Post Helper fills the page by itself, step by step as each one appears:
+    RedGifs: audience, tags, niches, private. You click Next on each step, and Publish at the end.
+    Pornhub: every queued video's title, tags (at least 2), categories (2 to 8) and "Publish to Shorties Only".
+      Then set "When will this be published?" and visibility, tick the certification boxes yourself and Submit.
+  Untick "Auto-fill each step" on the card to do it by hand; "Fill again" refills without adding doubles.
   Post Helper never clicks Next, Publish or Submit, and never ticks Pornhub's certification boxes.
   Each new RedGifs and Pornhub post is linked to its clip, with its link, in the clip's details.
 

@@ -74,7 +74,7 @@ async function attach(clips, planned, bulk = false) {
   $('attach').textContent = 'Attaching…';
   document.body.classList.add('busy');
   try {
-    await browser.runtime.sendMessage({type: 'attach', planned, bulk, options: data.options || {},
+    await browser.runtime.sendMessage({type: 'attach', planned, bulk, options: chosenOptions(),
       clips: clips.map(c => ({fp: c.fp, name: c.name, caption: c.caption || ''}))});
   } catch (e) {
     document.body.classList.remove('busy');
@@ -91,8 +91,20 @@ $('search').oninput = () => data && render();
 addEventListener('keydown', e => { if (e.key === 'Escape') browser.runtime.sendMessage({type: 'close-picker'}); });
 $('heading').textContent = `Choose a clip for ${platform}`;
 
+// The preset to fill unplanned clips with (planned ones bring their batch's preset). Remembered per site.
+function chosenOptions() {
+  const preset = (data.presets || []).find(p => String(p.id) === $('preset').value);
+  return preset ? preset.options : data.options || {};
+}
+
 browser.runtime.sendMessage({type: 'picker-data', platform}).then(result => {
   data = result;
+  const presets = data.presets || [];
+  $('preset').replaceChildren(...presets.map(p => el('option', {value: p.id}, p.name)));
+  const remembered = localStorage.getItem('preset:' + platform);
+  if (presets.some(p => String(p.id) === remembered)) $('preset').value = remembered;
+  $('preset-label').hidden = presets.length < 2;
+  $('preset').onchange = () => localStorage.setItem('preset:' + platform, $('preset').value);
   render();
   $('search').focus();
 }, () => {

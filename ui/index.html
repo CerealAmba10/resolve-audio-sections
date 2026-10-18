@@ -107,11 +107,8 @@
           <span class="with-unit"><input type="number" id="window" min="1" max="50" value="5"><em>oldest to pick from</em></span></label>
         <label class="field"><span>Batch folder</span><input id="batch-name" autocomplete="off"></label>
       </div>
-      <fieldset class="platforms">
-        <legend>Also plan posts for Post Helper</legend>
-        <label><input type="checkbox" value="Fansly"> <i class="swatch p1"></i>Fansly</label>
-        <label><input type="checkbox" value="RedGifs"> <i class="swatch p2"></i>RedGifs</label>
-        <label><input type="checkbox" value="Pornhub Shorts"> <i class="swatch p3"></i>Pornhub Shorts</label>
+      <fieldset class="platforms" id="platforms">
+        <legend>Also plan posts for Post Helper, with a preset for each site</legend>
       </fieldset>
       <div class="batch-head">
         <p class="rules">Never-posted clips first, then the longest-rested, picked with a little variety, never anything recent.</p>
@@ -125,10 +122,21 @@
     </section>
 
     <section class="view" id="view-sites" hidden>
-      <div class="segmented" role="tablist" aria-label="Site" id="site-tabs"></div>
-      <p class="hint site-note" id="site-note"></p>
-      <form class="site-form" id="site-form"></form>
-      <div class="actions"><button class="primary" id="save-site">Save</button></div>
+      <div class="presets-layout">
+        <nav class="preset-list" id="preset-list" aria-label="Presets"></nav>
+        <div class="preset-editor">
+          <div class="preset-head">
+            <label class="field preset-name"><span id="preset-site"></span><input id="preset-name" autocomplete="off"></label>
+            <div class="preset-actions">
+              <button class="ghost" id="duplicate-preset">Duplicate</button>
+              <button class="ghost" id="delete-preset">Delete</button>
+            </div>
+          </div>
+          <p class="hint site-note" id="site-note"></p>
+          <form class="site-form" id="site-form"></form>
+          <div class="actions"><button class="primary" id="save-site">Save preset</button></div>
+        </div>
+      </div>
     </section>
 
     <section class="view" id="view-activity" hidden>

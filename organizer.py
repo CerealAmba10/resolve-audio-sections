@@ -89,6 +89,7 @@ class App:
     def __init__(self, home=library.DATA, probe=None):
         self.home = Path(home)
         self.db = library.connect(self.home)
+        library.ensure_presets(self.db)
         self.lock = threading.RLock()
         self.probe = probe
         self.release = None
@@ -169,8 +170,11 @@ class App:
             'SELECT fp, name FROM clips WHERE missing=0 ORDER BY mtime DESC LIMIT 200')]
         for item in planned + [i for b in batches for i in b['items']] + clips:
             item['posted'] = posted.get(item['fp'], 0)
+        site_presets = library.presets(self.db, platform)
         return dict(platform=platform, planned=planned, batches=batches, library=clips,
-                    options=library.platform_settings([platform]).get(platform, {}))
+                    options=library.preset_settings(self.db, platform) if site_presets else {},
+                    presets=[dict(id=p['id'], name=p['name'], options={**p['settings'], 'preset': p['name']})
+                             for p in site_presets])
 
     def file_path(self, fp):
         clip = self.db.execute('SELECT folder, name FROM clips WHERE fp=?', (fp,)).fetchone()
@@ -233,7 +237,8 @@ class App:
             clips = [dict(r) for r in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0', (folder,))]
             chosen = [(c, '') for c in clips if c['name'] in names]
             batch, target = library.make_batch(self.db, folder, chosen, datetime.now(), body.get('name') or None)
-            platforms = [p for p in body.get('platforms', []) if p in HELPER_SITES]
+            choice = body.get('presets') or {}  # site -> preset id; a site's first preset otherwise
+            platforms = {p: choice.get(p) for p in body.get('platforms', []) if p in HELPER_SITES}
             items, skipped = library.helper_batch(self.db, batch, target, platforms, datetime.now(), self.probe) \
                 if platforms else ([], [])
             return dict(path=str(target), name=target.name, copied=len(chosen), planned=len(items), skipped=skipped)
@@ -242,8 +247,15 @@ class App:
             ok = library.record_post(self.db, body['platform'], name=body.get('name'), fp=body.get('fp'),
                                      at=body.get('at'), source=body.get('source', 'manual'))
             return dict(ok=ok)
-        if path == '/api/settings':
-            return dict(site=body['site'], settings=library.save_platform_settings(body['site'], body.get('values', {})))
+        if path == '/api/presets':
+            return library.save_preset(self.db, body['platform'], body.get('name', ''), body.get('values', {}), body.get('id'))
+        if path == '/api/presets/delete':
+            library.delete_preset(self.db, body['id'])
+            return dict(ok=True)
+        if path == '/api/tags':
+            # Tag/category names a site suggested on its own upload page (seen by Post Helper).
+            kind = body.get('kind') if body.get('kind') in ('tags', 'categories', 'niches') else 'tags'
+            return dict(saved=library.learn_tags(self.db, body['platform'], kind, body.get('names', [])[:500]))
         if path == '/api/watch':
             # The creator's own posts as read by Post Helper from pages the site already loaded.
             self.helper_seen = datetime.now()
@@ -301,9 +313,10 @@ class App:
             return self.detail(path.rsplit('/', 1)[1])
         if path == '/api/activity':
             return self.activity()
-        if path == '/api/settings':
+        if path == '/api/presets':
             from scheduler import DEFAULTS
-            return dict(sites=library.platform_settings(list(DEFAULTS)), helper=list(HELPER_SITES))
+            return dict(presets=library.presets(self.db), sites=list(DEFAULTS), helper=list(HELPER_SITES),
+                        tags={site: library.known_tags(self.db, site) for site in DEFAULTS})
         if path == '/api/helper/clips':
             self.helper_seen = datetime.now()
             return self.picker(query.get('platform', [''])[0])

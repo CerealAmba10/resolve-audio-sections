@@ -276,6 +276,7 @@ async function applyRename() {
 let batchTimer;
 function loadBatch() {
   $('batch-name').placeholder = new Date().toLocaleDateString('en-US', {month: 'long', year: 'numeric'});
+  run(renderPlatforms)();
   previewBatch();
 }
 
@@ -304,10 +305,11 @@ function renderBatch(total) {
 
 async function createBatch() {
   const platforms = [...document.querySelectorAll('.platforms input:checked')].map(i => i.value);
+  const presets = Object.fromEntries([...document.querySelectorAll('.platforms select')].map(s => [s.name, Number(s.value)]));
   const button = $('create-batch');
   button.classList.add('busy');
   try {
-    const result = await api('/api/batch', {folder: state.folder, names: state.chosen.map(c => c.name),
+    const result = await api('/api/batch', {folder: state.folder, names: state.chosen.map(c => c.name), presets,
       platforms, name: $('batch-name').value.trim()});
     toast(`Copied ${result.copied} clips into "${result.name}"` + (platforms.length ? `, ${result.planned} posts planned for Post Helper.` : '.') +
       (result.skipped.length ? ` ${result.skipped.length} skipped by site rules.` : ''));
@@ -385,57 +387,149 @@ function showFfmpeg(status) {
   if (status === 'downloading') setTimeout(run(refreshState), 3000);
 }
 
-/* Sites: each site's posting settings, used for planning and by Post Helper's "Fill this page". */
-const FIELD_ORDER = ['tags', 'categories', 'niches', 'audience', 'who', 'shorties', 'private', 'caption', 'times', 'clip', 'max_seconds',
-                     'max_mb', 'vertical', 'nsfw', 'keep_audio', 'price', 'min_tags', 'min_categories', 'subreddit', 'flair', 'url'];
+/* Sites: named presets per site (tags, categories, captions, times...), chosen per batch and in Post Helper. */
+const FIELD_ORDER = ['tags', 'categories', 'niches', 'audience', 'who', 'shorties', 'private', 'caption', 'times', 'clip',
+                     'max_seconds', 'max_mb', 'vertical', 'nsfw', 'keep_audio', 'price', 'min_tags', 'min_categories',
+                     'subreddit', 'flair', 'url'];
+const LISTS = ['tags', 'categories', 'niches'];  // edited as chips
+const HIDDEN = ['enabled', 'preset'];
 const FIELD_HELP = {
-  tags: 'Separate with commas. RedGifs and Pornhub pick these on their upload page.',
-  categories: "Separate with commas; must match Pornhub's category names. Pornhub needs 2 to 8.",
-  niches: 'Separate with commas, as named on RedGifs.', audience: 'Straight, Gay, Lesbian, Trans, Bisexual or Animated.',
+  tags: 'Type a tag and press Enter. Suggestions are tags this site has shown on its own upload page.',
+  categories: "Pornhub needs 2 to 8, from its own category list.",
+  niches: 'As named on RedGifs.', audience: 'Straight, Gay, Lesbian, Trans, Bisexual or Animated.',
   who: '"Performer(s)" or "Solo/Animation" (Pornhub), or leave empty.',
-  shorties: 'Turns on Pornhub\'s "Publish to Shorties Only" switch for each video.', caption: 'Uses {name} (the clip name) and {tags}.',
-  times: 'Daily posting times, e.g. 12:00, 20:00.', clip: 'teaser, full or any.', max_seconds: '0 means no limit.',
-  max_mb: '0 means no limit.', price: '0 means free.', url: 'The page "Open site" goes to.',
+  shorties: 'Turns on Pornhub\'s "Publish to Shorties Only" switch for each video.',
+  caption: 'Uses {name} (the clip name) and {tags}.', times: 'Daily posting times, e.g. 12:00, 20:00.',
+  clip: 'teaser, full or any.', max_seconds: '0 means no limit.', max_mb: '0 means no limit.', price: '0 means free.',
+  url: 'The page "Open site" goes to.',
 };
 const FIELD_NAME = {who: 'Who is in it', max_seconds: 'Longest clip (seconds)', max_mb: 'Largest file (MB)', nsfw: 'NSFW',
-                    keep_audio: 'Keep audio', shorties: 'Publish to Shorties only', min_tags: 'Fewest tags', min_categories: 'Fewest categories', url: 'Upload page'};
-let siteData = null, site = null;
+                    keep_audio: 'Keep audio', shorties: 'Publish to Shorties only', min_tags: 'Fewest tags',
+                    min_categories: 'Fewest categories', url: 'Upload page'};
+let presetData = null, presetId = null;
+const splitList = text => String(text || '').split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean);
+
+async function loadPresets() {
+  presetData = await api('/api/presets');
+  return presetData;
+}
 
 async function loadSites() {
-  siteData = await api('/api/settings');
-  site = site || siteData.helper[0];
+  await loadPresets();
+  if (!presetData.presets.some(p => p.id === presetId)) presetId = presetData.presets[0].id;
   renderSites();
 }
 
 function renderSites() {
-  $('site-tabs').replaceChildren(...Object.keys(siteData.sites).map(name => el('button', {
-    role: 'tab', 'aria-selected': String(name === site), onclick: () => { site = name; renderSites(); }}, name)));
-  $('site-note').textContent = siteData.helper.includes(site)
-    ? 'Post Helper uses these when you click "Fill this page" on this site, and the planner uses the times and limits.'
-    : "This site's terms don't allow automation: these settings only shape planning and the exported captions.";
-  const values = siteData.sites[site];
-  const keys = FIELD_ORDER.filter(k => k in values).concat(Object.keys(values).filter(k => !FIELD_ORDER.includes(k) && k !== 'enabled'));
-  $('site-form').replaceChildren(...keys.map(key => {
-    const value = values[key];
-    const input = typeof value === 'boolean'
-      ? el('input', {type: 'checkbox', name: key, checked: value})
-      : el('input', {name: key, type: typeof value === 'number' ? 'number' : 'text', step: 'any', value: String(value)});
-    const title = FIELD_NAME[key] || label(key);
-    return el('label', {class: typeof value === 'boolean' ? 'field check' : 'field'},
-      typeof value === 'boolean' ? input : el('span', {}, title), typeof value === 'boolean' ? el('span', {}, title) : input,
-      FIELD_HELP[key] ? el('small', {class: 'muted'}, FIELD_HELP[key]) : null);
-  }));
+  const current = presetData.presets.find(p => p.id === presetId);
+  $('preset-list').replaceChildren(...presetData.sites.map(site => el('div', {class: 'preset-group'},
+    el('div', {class: 'preset-site'}, el('i', {class: `swatch ${SWATCH(site)}`}), site,
+      presetData.helper.includes(site) ? null : el('span', {class: 'muted small'}, ' manual')),
+    ...presetData.presets.filter(p => p.platform === site).map(p => el('button', {
+      class: 'preset-item', 'aria-current': p.id === presetId ? 'true' : false,
+      onclick: () => { presetId = p.id; renderSites(); }}, p.name)),
+    el('button', {class: 'link small add-preset', onclick: run(() => newPreset(site))}, '+ New preset'))));
+  $('preset-site').textContent = `${current.platform} preset name`;
+  $('preset-name').value = current.name;
+  $('site-note').textContent = presetData.helper.includes(current.platform)
+    ? 'Post Helper fills these into the site\'s form, and batches use the times and limits.'
+    : "This site's terms don't allow automation: presets here only shape planning and exported captions.";
+  const known = presetData.tags[current.platform] || {};
+  const values = current.settings;
+  const keys = FIELD_ORDER.filter(k => k in values)
+    .concat(Object.keys(values).filter(k => !FIELD_ORDER.includes(k) && !HIDDEN.includes(k)));
+  $('site-form').replaceChildren(...keys.map(key => field(key, values[key], known[key] || [], current.platform)));
+}
+
+function field(key, value, known, site) {
+  const title = FIELD_NAME[key] || label(key);
+  const help = FIELD_HELP[key] ? el('small', {class: 'muted'}, FIELD_HELP[key]) : null;
+  if (typeof value === 'boolean') {
+    return el('label', {class: 'field check'}, el('input', {type: 'checkbox', name: key, checked: value}), el('span', {}, title), help);
+  }
+  if (LISTS.includes(key)) return chips(key, title, value, known, site, help);
+  return el('label', {class: 'field'}, el('span', {}, title),
+    el('input', {name: key, type: typeof value === 'number' ? 'number' : 'text', step: 'any', value: String(value)}), help);
+}
+
+// Tag-style list: each entry a chip; entries the site has never suggested are flagged before you post.
+function chips(key, title, value, known, site, help) {
+  const items = splitList(value);
+  const lower = new Set(known.map(k => k.toLowerCase()));
+  const listId = `known-${key}`;
+  const box = el('div', {class: 'chips', 'data-name': key});
+  const input = el('input', {list: listId, placeholder: items.length ? '' : `Add ${key}`, 'aria-label': `Add ${key}`});
+  const draw = () => {
+    box.replaceChildren(...items.map((item, i) => el('span', {
+      class: `chip${known.length && !lower.has(item.toLowerCase()) ? ' unknown' : ''}`,
+      title: known.length && !lower.has(item.toLowerCase()) ? `${site} hasn't suggested this yet. Check the spelling.` : ''},
+      item, el('button', {type: 'button', 'aria-label': `Remove ${item}`, onclick: () => { items.splice(i, 1); draw(); }}, '✕'))), input);
+    box.dataset.value = items.join(', ');
+  };
+  const add = () => {
+    for (const item of splitList(input.value)) if (!items.some(x => x.toLowerCase() === item.toLowerCase())) items.push(item);
+    input.value = '';
+    draw();
+    input.focus();
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); }
+    if (e.key === 'Backspace' && !input.value && items.length) { items.pop(); draw(); input.focus(); }
+  });
+  input.addEventListener('change', () => { if (known.includes(input.value)) add(); });  // picked from suggestions
+  input.addEventListener('blur', () => { if (input.value.trim()) add(); });
+  draw();
+  const count = known.length ? el('small', {class: 'muted'}, `${known.length} names learned from ${site}.`) : null;
+  return el('div', {class: 'field wide'}, el('span', {}, title), box,
+    el('datalist', {id: listId}, ...known.map(k => el('option', {value: k}))), help, count);
+}
+
+function formValues() {
+  const values = {};
+  for (const input of $('site-form').querySelectorAll('input[name]')) {
+    values[input.name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+  }
+  for (const box of $('site-form').querySelectorAll('.chips')) values[box.dataset.name] = box.dataset.value;
+  return values;
 }
 
 async function saveSite() {
-  const values = {};
-  for (const input of $('site-form').querySelectorAll('input')) {
-    values[input.name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
-  }
-  const result = await api('/api/settings', {site, values});
-  siteData.sites[site] = result.settings;
-  toast(`Saved ${site} settings.`);
-  renderSites();
+  const current = presetData.presets.find(p => p.id === presetId);
+  const saved = await api('/api/presets', {id: presetId, platform: current.platform, name: $('preset-name').value, values: formValues()});
+  toast(`Saved "${saved.name}" for ${saved.platform}.`);
+  await loadSites();
+}
+
+async function newPreset(site, from) {
+  const base = from || presetData.presets.find(p => p.platform === site);
+  let name = from ? `${from.name} copy` : 'New preset', n = 1;
+  while (presetData.presets.some(p => p.platform === site && p.name === name)) name = `${from ? from.name + ' copy' : 'New preset'} ${++n}`;
+  const saved = await api('/api/presets', {platform: site, name, values: from ? formValues() : base.settings});
+  presetId = saved.id;
+  await loadSites();
+  $('preset-name').select();
+}
+
+async function deletePreset() {
+  const current = presetData.presets.find(p => p.id === presetId);
+  if (!confirm(`Delete the "${current.name}" preset for ${current.platform}?`)) return;
+  await api('/api/presets/delete', {id: presetId});
+  presetId = null;
+  await loadSites();
+}
+
+// Batch view: tick sites to plan, each with its preset.
+async function renderPlatforms() {
+  const data = await loadPresets();
+  const fieldset = $('platforms');
+  const ticked = new Set([...fieldset.querySelectorAll('input:checked')].map(i => i.value));
+  const chosen = Object.fromEntries([...fieldset.querySelectorAll('select')].map(s => [s.name, s.value]));
+  fieldset.replaceChildren(fieldset.querySelector('legend') || el('legend', {}, 'Also plan posts for Post Helper'),
+    ...data.helper.map(site => el('div', {class: 'platform-choice'},
+      el('label', {}, el('input', {type: 'checkbox', value: site, checked: ticked.has(site)}),
+        el('i', {class: `swatch ${SWATCH(site)}`}), site),
+      el('select', {name: site, 'aria-label': `${site} preset`},
+        ...data.presets.filter(p => p.platform === site).map(p => el('option', {value: p.id, selected: String(p.id) === chosen[site]}, p.name))))));
 }
 
 /* Updates */
@@ -492,6 +586,9 @@ $('apply-rename').onclick = run(applyRename);
 $('apply-sort').onclick = run(applySort);
 $('save-site').onclick = run(saveSite);
 $('site-form').onsubmit = e => { e.preventDefault(); run(saveSite)(); };
+$('duplicate-preset').onclick = run(() => newPreset(presetData.presets.find(p => p.id === presetId).platform,
+                                                     presetData.presets.find(p => p.id === presetId)));
+$('delete-preset').onclick = run(deletePreset);
 $('autosort').onchange = run(async () => {
   const on = $('autosort').checked;
   await api('/api/sort', {folder: state.folder, autosort: on});

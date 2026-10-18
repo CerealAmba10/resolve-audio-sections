@@ -4,6 +4,24 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const list = text => String(text || '').split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean);
 const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const shown = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+// Parts already filled (tag boxes, Pornhub videos), so filling again never adds a tag or category twice.
+let FILLED = new WeakSet();
+const refill = () => { FILLED = new WeakSet(); };
+
+// What is on screen to fill, as a short signature: auto-fill runs again only when this changes
+// (a new RedGifs wizard step, or more videos in Pornhub's queue).
+const STEPS = {
+  'RedGifs': () => [
+    [...document.querySelectorAll('input[type=radio][name]')].some(r => shown(r.closest('label, li') || r)) && 'audience',
+    [...document.querySelectorAll('input[placeholder^="Type to search for tags"]')].some(shown) && 'tags',
+    document.querySelector('input[type=checkbox][name]') && [...document.querySelectorAll('input[placeholder="Search..."]')].some(shown) && 'niches',
+    [...document.querySelectorAll('textarea[placeholder^="Give your content"]')].some(shown) && 'description',
+  ].filter(Boolean).join('+'),
+  'Pornhub Shorts': () => {
+    const videos = document.querySelectorAll('input[name=title]').length;
+    return videos ? `videos:${videos}` : '';
+  },
+};
 
 function type(el, text) {
   el.focus();
@@ -56,7 +74,9 @@ const FILLERS = {
       notes.push(`Audience: ${options.audience || 'Straight'}.`);
     }
     const tagBox = [...document.querySelectorAll('input[placeholder^="Type to search for tags"]')].find(shown);
-    if (tagBox) {
+    if (tagBox && FILLED.has(tagBox)) notes.push('Tags already added.');
+    else if (tagBox) {
+      FILLED.add(tagBox);
       const missing = [];
       for (const tag of list(options.tags)) {
         type(tagBox, tag);
@@ -114,10 +134,13 @@ const FILLERS = {
     for (const [i, title] of titles.entries()) {
       const clip = clips[i] || clips[clips.length - 1] || {};
       if (clip.caption) type(title, clip.caption);
+      const again = FILLED.has(title);  // tags, categories and the switch were already done for this video
+      FILLED.add(title);
       if (options.who) {
         const label = [...document.querySelectorAll('label')].filter(shown).filter(l => same(l.textContent, options.who))[i];
         if (label) label.click();
       }
+      if (again) continue;
       if (tagBoxes[i]) for (const tag of list(options.tags)) await pick(tagBoxes[i], tag, 'li', true);  // typed tags are fine
       // "Publish to Shorties Only": a custom switch (label + slider around a hidden checkbox).
       if (typeof options.shorties === 'boolean') {

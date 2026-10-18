@@ -65,6 +65,7 @@ nicheq.oninput = () => {
   }
 };
 publish.onclick = () => { window.published = true; fetch('/v2/gifs/submit', {method: 'POST', body: '{}'}); };
+fetch('/v1/tags'); fetch('/v2/niches/suggest/adding');
 </script>"""
 PORNHUB = b"""<button id="sel" type="button">Select Videos to Upload</button>
 <input type="file" class="dz-hidden-input" id="vid" multiple accept="video/*" style="display:none">
@@ -102,6 +103,8 @@ function item() {
   tags.onkeydown = e => { if (e.key === 'Enter' && tags.value) {
     d.querySelector('.tagpills').insertAdjacentHTML('beforeend', '<div class="c-pill">' + tags.value + '</div>'); tags.value = ''; } };
   suggest(d.querySelector('[name=category]'), d.querySelector('.catopts'), CATS, 'autoComplete_item', d.querySelector('.catpills'));
+  fetch('/video-manager/abc123', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                  body: JSON.stringify({type: 'category', partialString: 'a', videoType: 'video'})});
   return d;
 }
 submit.onclick = async () => { for (const it of document.querySelectorAll('.item')) await fetch('/uploading/save_videodata', {method: 'POST', body: 'x'}); };
@@ -124,6 +127,10 @@ class Site(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body if isinstance(body, bytes) else json.dumps(body).encode())
 
     def do_GET(self):
+        if self.path == '/v1/tags':
+            return self.send_body({'tags': [{'name': 'Anime', 'count': 9}, {'name': 'Hentai', 'count': 7}, {'name': 'POV', 'count': 3}]})
+        if self.path == '/v2/niches/suggest/adding':
+            return self.send_body({'niches': [{'id': 'rough-sex', 'name': 'Rough Sex'}, {'id': 'cosplay', 'name': 'Cosplay'}]})
         if self.path == '/api/v1/account/me':
             return self.send_body({'success': True, 'response': {'account': {'id': '412345678901234567', 'username': 'ducky'}}})
         if self.path.startswith('/api/v1/timelinenew/'):
@@ -139,6 +146,8 @@ class Site(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        if self.path.startswith('/video-manager/'):
+            return self.send_body({'Anime': 12, 'Cosplay': 4, 'Amateur': 30})
         if self.path == '/v2/gifs/submit':
             return self.send_body({'id': 'CheerfulRedPanda', 'duration': 12})
         if self.path == '/uploading/save_videodata':
@@ -190,7 +199,8 @@ class PostHelperTests(unittest.TestCase):
         for name, old, new in (
                                ('store.js', 'http://127.0.0.1:47833', f'http://127.0.0.1:{self.servers[0].server_port}'),
                                ('watcher.js', "['*://apiv3.fansly.com/api/v1/*']", "['http://127.0.0.1/api/v1/*']"),
-                               ('watcher.js', "'*://*.redgifs.com/*', '*://pornhub.mainhub.com/*'", "'http://127.0.0.1/*'")):
+                               ('watcher.js', "'*://*.redgifs.com/*', '*://pornhub.mainhub.com/*'", "'http://127.0.0.1/*'"),
+                               ('watcher.js', "'*://api.redgifs.com/*', '*://pornhub.mainhub.com/*'", "'http://127.0.0.1/*'")):
             (ext / name).write_text((ext / name).read_text().replace(old, new))
         self.process, self.bidi = launch(root / 'profile')
         self.bidi.call('webExtension.install', extensionData={'type': 'path', 'path': str(ext)})
@@ -326,9 +336,15 @@ class PostHelperTests(unittest.TestCase):
 
     def fill(self, page):
         card = "document.getElementById('post-helper-card').shadowRoot"
+        return self.wait(page, f"{card}?.querySelector('.note')?.textContent.startsWith('Auto-filled') && "
+                               f"{card}.querySelector('.note').textContent", timeout=40)
+
+    def fill_again(self, page):
+        card = "document.getElementById('post-helper-card').shadowRoot"
         self.js(page, f"{card}.querySelector('[data-act=fill]').click()")
+        time.sleep(0.5)
         return self.wait(page, f"!{card}.querySelector('[data-act=fill]')?.disabled && {card}.querySelector('.note').textContent",
-                         timeout=30)
+                         timeout=40)
 
     def links(self):
         deadline = time.monotonic() + 10
@@ -352,7 +368,11 @@ class PostHelperTests(unittest.TestCase):
         self.assertTrue(self.js(page, "document.querySelector('[name=rough-sex]').checked"))
         self.assertTrue(self.js(page, "document.querySelector('[name=cosplay]').checked"))  # found by searching
         self.assertTrue(self.js(page, 'priv.checked'))
+        self.fill_again(page)
+        self.assertEqual(self.js(page, 'picked.textContent'), 'Anime,Hentai')  # filling again adds nothing twice
         self.assertFalse(self.js(page, '!!window.published'))  # Publish stays the creator's click
+        learned = self.app.get('/api/presets', {})['tags']['RedGifs']
+        self.assertEqual((learned['tags'], learned['niches']), (['Anime', 'Hentai', 'POV'], ['Cosplay', 'Rough Sex']))
         self.js(page, 'publish.click()')
         rows = self.links()
         self.assertEqual(len(rows), 1)
@@ -373,6 +393,9 @@ class PostHelperTests(unittest.TestCase):
         self.assertTrue(self.js(page, f"{items}.every(i => i.querySelector('.solo').checked)"))
         self.assertTrue(self.js(page, f"{items}.every(i => i.querySelector('.shortie').checked)"))  # Shorties switch on
         self.assertIn('Shorties on', note)
+        self.fill_again(page)
+        self.assertEqual(self.js(page, f"{items}.map(i => i.querySelectorAll('.tagpills .c-pill').length).join()"), '2,2')  # no doubles
+        self.assertEqual(self.app.get('/api/presets', {})['tags']['Pornhub Shorts'], {'categories': ['Amateur', 'Anime', 'Cosplay']})
         self.assertFalse(self.js(page, "[...document.querySelectorAll('.certify')].some(c => c.checked)"))  # never ticked for them
         self.js(page, 'submit.click()')
         deadline = time.monotonic() + 10
@@ -381,6 +404,18 @@ class PostHelperTests(unittest.TestCase):
         rows = self.links()
         self.assertEqual([(r[0], r[3]) for r in rows], [('Pornhub Shorts', 'SFW 1.mp4'), ('Pornhub Shorts', 'SFW 2.mp4')])
         self.assertTrue(all(r[2] == f'https://www.pornhub.com/view_video.php?viewkey=ph{r[1]}' for r in rows))
+
+    def test_redgifs_picker_preset_choice(self):
+        pov = library.save_preset(self.app.db, 'RedGifs', 'POV set', {'tags': 'POV', 'audience': 'Gay', 'niches': ''})
+        page = self.bidi.call('browsingContext.create', type='tab')['context']
+        self.attach_from_picker(page, '/redgifs', 'pickvid.click()',
+                                f"const s = document.getElementById('preset'); s.value = '{pov['id']}'; s.dispatchEvent(new Event('change'));"
+                                " [...document.querySelectorAll('.tile')].pop().click(); document.getElementById('attach').click()")
+        self.fill(page)
+        self.assertTrue(self.js(page, "document.querySelector('[name=gay]').checked"))
+        self.assertEqual(self.js(page, 'picked.textContent'), 'POV')
+        card = "document.getElementById('post-helper-card').shadowRoot"
+        self.assertIn('POV set', self.js(page, f"{card}.textContent"))
 
 if __name__ == '__main__':
     unittest.main()

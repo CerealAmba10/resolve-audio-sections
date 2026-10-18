@@ -103,3 +103,37 @@ browser.webRequest.onBeforeRequest.addListener(details => {
     if (posts.length) await app('/api/watch', {platform: 'Fansly', posts});
   });
 }, {urls: WATCH_URLS, types: ['xmlhttprequest']}, ['blocking']);
+
+// Learn the tag, niche and category names each site really offers, from its own suggestion lists, so presets can
+// suggest them and flag misspellings. Names only; nothing else from these replies is kept.
+const LEARN_URLS = ['*://api.redgifs.com/*', '*://pornhub.mainhub.com/*'];
+const LEARN = [
+  {platform: 'RedGifs', test: /\/v1\/tags\/?$/, kind: () => 'tags',
+   names: json => ((json && json.tags) || []).map(t => t.name)},
+  {platform: 'RedGifs', test: /\/v2\/niches\//, kind: () => 'niches',
+   names: json => ((json && json.niches) || []).map(n => n.name)},
+  {platform: 'Pornhub Shorts', test: /\/video-manager\//, kind: request => /categ/i.test(request.type || '') ? 'categories' : 'tags',
+   names: json => (json && typeof json === 'object' && !Array.isArray(json) ? Object.keys(json) : [])},
+];
+
+function requestFields(body) {
+  try {
+    if (body && body.formData) return Object.fromEntries(Object.entries(body.formData).map(([k, v]) => [k, v[0]]));
+    if (body && body.raw && body.raw[0] && body.raw[0].bytes) {
+      const text = new TextDecoder().decode(body.raw[0].bytes);
+      try { return JSON.parse(text); } catch (e) { return Object.fromEntries(new URLSearchParams(text)); }
+    }
+  } catch (e) { /* unreadable: treat as empty */ }
+  return {};
+}
+
+browser.webRequest.onBeforeRequest.addListener(details => {
+  const path = new URL(details.url).pathname;
+  const rule = LEARN.find(r => r.test.test(path));
+  if (!rule || !['GET', 'POST'].includes(details.method)) return;
+  const kind = rule.kind(requestFields(details.requestBody));
+  readJson(details, async json => {
+    const names = rule.names(json).filter(n => typeof n === 'string' && n.trim() && n.length <= 80);
+    if (names.length) await app('/api/tags', {platform: rule.platform, kind, names: names.slice(0, 500)});
+  });
+}, {urls: LEARN_URLS, types: ['xmlhttprequest']}, ['blocking', 'requestBody']);

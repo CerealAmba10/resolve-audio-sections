@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Post Helper",
-  "version": "2.4",
+  "version": "2.5",
   "description": "Opens your Ducky’s Clip Organizer clips when you upload on Fansly, RedGifs or Pornhub, fills the caption, and keeps track of how your Fansly posts do. You click Post yourself. Nothing leaves your computer.",
   "browser_specific_settings": {
     "gecko": {

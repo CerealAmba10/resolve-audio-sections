@@ -36,6 +36,12 @@ def connect(home=DATA):
         -- Site posts seen by Post Helper's watcher: latest numbers, plus one reading per day for trends.
         CREATE TABLE IF NOT EXISTS site_posts(platform TEXT, post_id TEXT, fp TEXT, created TEXT, counters TEXT,
             updated TEXT, PRIMARY KEY(platform, post_id));
+        -- Named presets per site (tags, categories, captions, times...), chosen per batch or per post.
+        CREATE TABLE IF NOT EXISTS presets(id INTEGER PRIMARY KEY, platform TEXT, name TEXT, settings TEXT,
+            UNIQUE(platform, name));
+        -- Tag and category names each site really offers, learned from its own suggestion lists.
+        CREATE TABLE IF NOT EXISTS site_tags(platform TEXT, kind TEXT, name TEXT, uses INTEGER,
+            PRIMARY KEY(platform, kind, name));
         CREATE TABLE IF NOT EXISTS site_post_days(platform TEXT, post_id TEXT, day TEXT, counters TEXT,
             PRIMARY KEY(platform, post_id, day));
     """)
@@ -387,9 +393,9 @@ def platform_settings(platforms):
                    'enabled': True} for name in platforms if name in DEFAULTS}
 
 
-def save_platform_settings(site, values):
-    """Check and save one site's settings (shared with the planner's settings.json)."""
-    from scheduler import DEFAULTS, HOME, next_slots
+def check_settings(site, values):
+    """A site's settings with these changes, checked: types match, times and caption template can be used."""
+    from scheduler import DEFAULTS, next_slots
     if site not in DEFAULTS:
         raise ValueError('Unknown site.')
     clean = {}
@@ -401,7 +407,7 @@ def save_platform_settings(site, values):
             clean[key] = bool(value) if kind is bool else kind(value)
         except (TypeError, ValueError):
             raise ValueError(f'{key.replace("_", " ")} must be a {"number" if kind in (int, float) else "text"}.') from None
-    merged = {**DEFAULTS[site], **clean}
+    merged = {**DEFAULTS[site], **clean, 'enabled': True}
     if merged['clip'] not in ('teaser', 'full', 'any'):
         raise ValueError('Clip type must be teaser, full or any.')
     next(next_slots(merged['times'], datetime.now(), set()))  # raises if the posting times can't be read
@@ -409,23 +415,81 @@ def save_platform_settings(site, values):
         merged['caption'].format(name='', tags='')
     except (KeyError, IndexError):
         raise ValueError('The caption can only use {name} and {tags}.') from None
-    path = HOME / 'settings.json'
+    return merged
+
+
+def ensure_presets(db):
+    """Every site starts with a "Default" preset, taken from the planner's settings."""
+    from scheduler import DEFAULTS
+    have = {r['platform'] for r in db.execute('SELECT DISTINCT platform FROM presets')}
+    missing = [site for site in DEFAULTS if site not in have]
+    for site, settings in platform_settings(missing).items():
+        db.execute('INSERT INTO presets(platform, name, settings) VALUES(?, ?, ?)', (site, 'Default', json.dumps(settings)))
+    db.commit()
+
+
+def presets(db, platform=None):
+    rows = db.execute('SELECT * FROM presets WHERE ? IS NULL OR platform=? ORDER BY platform, id', (platform, platform))
+    return [dict(id=r['id'], platform=r['platform'], name=r['name'], settings=json.loads(r['settings'])) for r in rows]
+
+
+def preset_settings(db, platform, preset_id=None):
+    """The chosen preset's settings for a site (its first preset if none or a stale one is given)."""
+    found = presets(db, platform)
+    chosen = next((p for p in found if p['id'] == preset_id), found[0] if found else None)
+    if not chosen:
+        raise ValueError(f'No preset for {platform}.')
+    return {**chosen['settings'], 'enabled': True, 'preset': chosen['name']}
+
+
+def save_preset(db, platform, name, values, preset_id=None):
+    name = str(name).strip()
+    if not name:
+        raise ValueError('Give the preset a name.')
+    settings = check_settings(platform, values)
     try:
-        saved = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        saved = {}
-    saved[site] = {**saved.get(site, {}), **clean}
-    HOME.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix('.json.tmp')
-    temp.write_text(json.dumps(saved, indent=2), encoding='utf-8')
-    os.replace(temp, path)
-    return platform_settings([site])[site]
+        if preset_id:
+            db.execute('UPDATE presets SET name=?, settings=? WHERE id=? AND platform=?',
+                       (name, json.dumps(settings), preset_id, platform))
+        else:
+            preset_id = db.execute('INSERT INTO presets(platform, name, settings) VALUES(?, ?, ?)',
+                                   (platform, name, json.dumps(settings))).lastrowid
+    except sqlite3.IntegrityError:
+        raise ValueError(f'{platform} already has a preset called "{name}".') from None
+    db.commit()
+    return next(p for p in presets(db, platform) if p['id'] == preset_id)
+
+
+def delete_preset(db, preset_id):
+    row = db.execute('SELECT platform FROM presets WHERE id=?', (preset_id,)).fetchone()
+    if not row:
+        return
+    if db.execute('SELECT COUNT(*) FROM presets WHERE platform=?', (row['platform'],)).fetchone()[0] <= 1:
+        raise ValueError('Each site keeps at least one preset.')
+    db.execute('DELETE FROM presets WHERE id=?', (preset_id,))
+    db.commit()
+
+
+def learn_tags(db, platform, kind, names):
+    """Remember tag or category names the site itself suggested, so presets can be checked against them."""
+    rows = [(platform, kind, str(n).strip()[:80]) for n in names if str(n).strip()][:2000]
+    db.executemany("""INSERT INTO site_tags(platform, kind, name, uses) VALUES(?, ?, ?, 1)
+        ON CONFLICT(platform, kind, name) DO UPDATE SET uses=uses+1""", rows)
+    db.commit()
+    return len(rows)
+
+
+def known_tags(db, platform):
+    out = {}
+    for r in db.execute('SELECT kind, name FROM site_tags WHERE platform=? ORDER BY uses DESC, name', (platform,)):
+        out.setdefault(r['kind'], []).append(r['name'])
+    return out
 
 
 def helper_batch(db, batch, target, platforms, now, probe):
-    """batch.json for Post Helper, using the planner's per-site settings and daily posting times."""
+    """batch.json for Post Helper. platforms: {site: preset id or None}; each site uses that preset's settings."""
     from scheduler import plan
-    settings = platform_settings(platforms)
+    settings = {site: preset_settings(db, site, preset_id) for site, preset_id in platforms.items()}
     taken = [dict(platform=r['platform'], at=r['at'], file='') for r in
              db.execute('SELECT platform, at FROM planned WHERE at >= ?', (now.strftime(FMT),))]
     files = [str(target / r['name']) for r in db.execute('SELECT name FROM batch_items WHERE batch=?', (batch,))]

@@ -121,14 +121,51 @@
           note += ' Caption filled.';
         } else note += ' Use Copy for the caption once its box appears.';
       }
-      current = {clips: message.clips, planned: message.planned, bulk: message.bulk,
+      current = {clips: message.clips, planned: message.planned, bulk: message.bulk, auto: true, step: null,
                  options: (message.planned && message.planned.options) || message.options || {}};
       if (message.planned) current.clips = current.clips.map(c => ({...c, caption: c.caption || message.planned.caption}));
+      refill();
       renderCard(note + (message.bulk && platform === 'Fansly'
         ? ' Using FBuddy Bulk Posts? Paste the captions with "Paste texts" and keep Sequential order.'
         : " Check everything, then click the site's Post button."));
+      watchForm();
     }
   });
+
+  // Auto-fill: whenever a new step or video form appears, fill it straight away (never Next, Publish or Submit).
+  let observer = null, filling = false, timer = null;
+  async function fillNow(prefix) {
+    if (!current || filling || !FILLERS[platform]) return;
+    filling = true;
+    let note;
+    try {
+      note = await FILLERS[platform](current.options, current.clips);
+    } catch (e) {
+      note = 'Something on this page could not be filled: ' + e.message;
+    }
+    filling = false;
+    if (current) renderCard(prefix + note);
+  }
+  function check() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!current || !current.auto || filling || !STEPS[platform]) return;
+      const step = STEPS[platform]();
+      if (!step || step === current.step) return;
+      current.step = step;
+      fillNow('Auto-filled. ');
+    }, 600);
+  }
+  function watchForm() {
+    if (!FILLERS[platform] || current.failed) return;
+    if (!observer) observer = new MutationObserver(check);
+    observer.observe(document.body, {childList: true, subtree: true});
+    check();
+  }
+  function stopWatching() {
+    if (observer) observer.disconnect();
+    clearTimeout(timer);
+  }
 
   const SHOWN = ['audience', 'price', 'tags', 'niches', 'categories', 'keep_audio', 'public', 'private'];
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
@@ -142,9 +179,10 @@
     const many = current.clips.length > 1;
     // FBuddy "Paste texts" format: captions separated by a line containing only ---, in clip order.
     const captions = current.clips.map(c => c.caption || c.name.replace(/\.[^.]+$/, '')).join('\n---\n');
-    const rows = planned ? [['post at', planned.at], ['caption', planned.caption],
+    const presetRow = current.options && current.options.preset && FILLERS[platform] ? [['preset', current.options.preset]] : [];
+    const rows = presetRow.concat(planned ? [['post at', planned.at], ['caption', planned.caption],
       ...SHOWN.filter(k => planned.options[k] !== undefined && planned.options[k] !== '').map(k => [k.replace('_', ' '), planned.options[k]])]
-      : many ? [['captions', `${current.clips.length} captions, in clip order`, captions]] : [];
+      : many ? [['captions', `${current.clips.length} captions, in clip order`, captions]] : []);
     cardRoot.innerHTML = `<style>
       :host { all: initial; position: fixed; right: 16px; bottom: 16px; z-index: 2147483645; }
       .card { font: 13px/1.45 "Segoe UI", system-ui, sans-serif; color: #f2eee8; background: #211e1b; border: 1px solid #3b3631;
@@ -159,15 +197,26 @@
       .primary:hover { background: #f5c25e; }
       .actions { display: flex; gap: 8px; margin-top: 10px; }
       .note { margin-top: 10px; color: #c9c1b6; }
+      .auto { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: #c9c1b6; cursor: pointer; }
+      .auto input { accent-color: #f0b440; }
     </style><div class="card"><div class="title"><span>${esc(many ? `${current.clips.length} clips` : current.clips[0].name)}</span>
       <span>${esc(platform)}</span></div>
       ${rows.map(([k, v, copy]) => `<div class="row"><b>${esc(k)}</b><span>${esc(v)}</span><button data-copy="${esc(copy ?? v)}">Copy</button></div>`).join('')}
-      <div class="actions">${!current.failed && FILLERS[platform] ? '<button data-act="fill">Fill this page</button>' : ''}
+      ${!current.failed && FILLERS[platform] ? `<label class="auto"><input type="checkbox" data-act="auto" ${current.auto ? 'checked' : ''}>
+        Auto-fill each step as it appears</label>` : ''}
+      <div class="actions">${!current.failed && FILLERS[platform] ? '<button data-act="fill">Fill again</button>' : ''}
         ${current.failed ? '' : `<button class="primary" data-act="posted">${many ? `I posted all ${current.clips.length}` : 'I posted it'}</button>`}
         <button data-act="dismiss">Not posted</button></div>
       <div class="note">${esc(note)}</div></div>`;
     if (!card.isConnected) document.documentElement.appendChild(card);
   }
+
+  cardRoot.addEventListener('change', event => {
+    if (event.target.dataset.act !== 'auto' || !current) return;
+    current.auto = event.target.checked;
+    current.step = null;  // turning it back on fills what's on screen now
+    if (current.auto) check();
+  });
 
   cardRoot.addEventListener('click', async event => {
     const button = event.target.closest('button');
@@ -180,23 +229,19 @@
     if (button.dataset.act === 'posted') {
       const result = await browser.runtime.sendMessage({type: 'posted', platform, fps: current.clips.map(c => c.fp)});
       current = null;
+      stopWatching();
       renderCard();
       if (result && result.waiting) console.info('Post Helper: Ducky’s Clip Organizer is closed; the post is logged when it opens.');
     }
     if (button.dataset.act === 'fill') {
       button.disabled = true;
       button.textContent = 'Filling…';
-      let note;
-      try {
-        note = await FILLERS[platform](current.options, current.clips);
-      } catch (e) {
-        note = 'Something on this page could not be filled: ' + e.message;
-      }
-      renderCard(note);
+      await fillNow('');
       return;
     }
     if (button.dataset.act === 'dismiss') {
       current = null;
+      stopWatching();
       renderCard();
     }
   });

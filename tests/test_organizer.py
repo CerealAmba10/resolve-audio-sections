@@ -75,22 +75,32 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(sum(w['platforms'].get('Fansly', 0) for w in self.call('GET', '/api/activity')[1]['weeks']), 1)
         self.assertEqual(self.call('GET', '/file/' + first['fp'], headers={organizer.HEADER: ''})[0], 403)
 
-    def test_save_site_settings(self):
-        from unittest.mock import patch
-        import scheduler
-        with tempfile.TemporaryDirectory() as home, patch.object(scheduler, 'HOME', Path(home)):
-            status, saved = self.call('POST', '/api/settings', {'site': 'Pornhub Shorts', 'values': {
-                'tags': 'vtuber, cosplay', 'categories': 'Anime, Cosplay', 'who': 'Solo/Animation', 'private': True,
-                'max_seconds': '0', 'enabled': False, 'bogus': 1}})
-            self.assertEqual(status, 200)
-            self.assertEqual((saved['settings']['tags'], saved['settings']['max_seconds'], saved['settings']['private']),
-                             ('vtuber, cosplay', 0, True))
-            sites = self.call('GET', '/api/settings')[1]['sites']
-            self.assertEqual(sites['Pornhub Shorts']['categories'], 'Anime, Cosplay')
-            self.assertNotIn('bogus', json.loads((Path(home) / 'settings.json').read_text())['Pornhub Shorts'])
-            status, body = self.call('POST', '/api/settings', {'site': 'RedGifs', 'values': {'times': 'noon'}})
-            self.assertEqual(status, 400)
-            self.assertEqual(json.loads((Path(home) / 'settings.json').read_text()).get('RedGifs'), None)  # nothing saved
+    def test_presets_per_site_and_batches_use_them(self):
+        presets = self.call('GET', '/api/presets')[1]['presets']
+        self.assertEqual({p['platform'] for p in presets if p['name'] == 'Default'},
+                         {'Fansly', 'RedGifs', 'Pornhub Shorts', 'Instagram', 'TikTok', 'Reddit'})  # one each to start
+        status, vtuber = self.call('POST', '/api/presets', {'platform': 'Pornhub Shorts', 'name': 'Vtuber', 'values': {
+            'tags': 'vtuber, cosplay', 'categories': 'Anime, Cosplay', 'who': 'Solo/Animation', 'clip': 'any',
+            'max_seconds': '0', 'bogus': 1}})
+        self.assertEqual(status, 200)
+        self.assertEqual((vtuber['settings']['tags'], vtuber['settings']['max_seconds']), ('vtuber, cosplay', 0))
+        self.assertNotIn('bogus', vtuber['settings'])
+        self.assertEqual(self.call('POST', '/api/presets', {'platform': 'Pornhub Shorts', 'name': 'Vtuber', 'values': {}})[0], 400)
+        self.assertEqual(self.call('POST', '/api/presets', {'platform': 'RedGifs', 'name': 'Bad', 'values': {'times': 'noon'}})[0], 400)
+        folder = self.call('POST', '/api/folders', {'path': str(self.folder)})[1]['path']
+        created = self.call('POST', '/api/batch', {'folder': folder, 'names': ['one.mp4'], 'platforms': ['Pornhub Shorts'],
+                                                   'presets': {'Pornhub Shorts': vtuber['id']}})[1]
+        self.assertEqual(created['planned'], 1)
+        planned = self.call('GET', '/api/helper/clips?platform=Pornhub Shorts'.replace(' ', '%20'))[1]
+        self.assertEqual((planned['planned'][0]['options']['preset'], planned['planned'][0]['options']['tags']),
+                         ('Vtuber', 'vtuber, cosplay'))
+        self.assertEqual([p['name'] for p in planned['presets']], ['Default', 'Vtuber'])
+        self.assertEqual(self.call('POST', '/api/tags', {'platform': 'RedGifs', 'kind': 'tags', 'names': ['Anime', 'POV']})[1],
+                         {'saved': 2})
+        self.assertEqual(self.call('GET', '/api/presets')[1]['tags']['RedGifs'], {'tags': ['Anime', 'POV']})
+        self.assertEqual(self.call('POST', '/api/presets/delete', {'id': vtuber['id']})[0], 200)
+        default = next(p for p in self.call('GET', '/api/presets')[1]['presets'] if p['platform'] == 'Pornhub Shorts')
+        self.assertEqual(self.call('POST', '/api/presets/delete', {'id': default['id']})[0], 400)  # keep one per site
 
 
 class UpdateTests(unittest.TestCase):
