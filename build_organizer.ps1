@@ -11,5 +11,13 @@ Compress-Archive -Path 'helper/*' -DestinationPath 'dist/Post Helper/post-helper
 Move-Item -LiteralPath 'dist/Post Helper/post-helper.zip' -Destination 'dist/Post Helper/post-helper.xpi'
 Copy-Item -LiteralPath 'HELPER-HOW-TO.txt' -Destination 'dist/Post Helper/HOW TO USE.txt' -Force
 Copy-Item -LiteralPath 'HELPER-HOW-TO.txt' -Destination 'dist/HOW TO USE.txt' -Force
-Write-Host "Built dist/DuckysClipOrganizer.exe and dist/Post Helper/post-helper.xpi"
+# Upload Layout Recorder, sent to the creator to map each site's post page.
+New-Item -ItemType Directory -Path 'dist/Upload Layout Recorder' -Force | Out-Null
+Remove-Item -LiteralPath 'dist/Upload Layout Recorder/recorder.zip', 'dist/Upload Layout Recorder/upload-layout-recorder.xpi' -ErrorAction SilentlyContinue
+Compress-Archive -Path 'recorder/*' -DestinationPath 'dist/Upload Layout Recorder/recorder.zip'
+Move-Item -LiteralPath 'dist/Upload Layout Recorder/recorder.zip' -Destination 'dist/Upload Layout Recorder/upload-layout-recorder.xpi'
+Copy-Item -LiteralPath 'RECORDER-HOW-TO.txt' -Destination 'dist/Upload Layout Recorder/HOW TO USE.txt' -Force
+Remove-Item -LiteralPath 'dist/Upload Layout Recorder.zip' -ErrorAction SilentlyContinue
+Compress-Archive -Path 'dist/Upload Layout Recorder' -DestinationPath 'dist/Upload Layout Recorder.zip'
+Write-Host "Built dist/DuckysClipOrganizer.exe, dist/Post Helper/post-helper.xpi and dist/Upload Layout Recorder.zip"
 Write-Host "To ship an update: bump VERSION in organizer.py, rebuild, then create a GitHub release tagged vX.Y.Z with DuckysClipOrganizer.exe attached."

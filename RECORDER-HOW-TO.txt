@@ -1,0 +1,30 @@
+Upload Layout Recorder (Firefox)
+
+This shows how each site's upload page works, so posting can be set up for you. It only records while you
+have it switched on, and only on Fansly, RedGifs and Pornhub.
+
+Install
+  1. Unzip this folder.
+  2. In Firefox, type  about:debugging#/runtime/this-firefox  in the address bar and press Enter.
+  3. Click "Load Temporary Add-on..." and choose upload-layout-recorder.xpi. A page with these steps opens.
+
+Record (once per site you use)
+  1. Open the site, sign in as usual, and go to the page where you make a new post.
+  2. Click the recorder button in the Firefox toolbar (top right), then "Start watching".
+     It shows the page it is watching.
+  3. Click EVERY button, tab, menu and option on the post page, one at a time, and let each menu open fully:
+     media, caption, tags, price or "pay to view", who can see it, schedule, expiry, anything else there is.
+  4. Add a short test video. Try adding several videos at once too, if the site allows it.
+  5. Wait until the site says the video has finished processing. Post or schedule it only if you're happy to;
+     you can delete it afterwards.
+  6. Click the recorder button again, then "Stop watching". Move on to the next site.
+
+Send it back
+  Recorder button, "Review and save". Untick any screenshot you'd rather not share, click "Save zip", and send
+  the zip from your Downloads folder. Save before closing Firefox: the recording (and the add-on) are removed
+  when Firefox closes.
+
+What it records, only while watching: clicks, the names of buttons, menus and fields, page addresses,
+screenshots, and the field NAMES the site's pages send and receive (like "price" or "schedule time", never
+what's in them). Never recorded: passwords, codes, anything you type, messages, payment details, or any
+sign-in screen. Nothing is sent anywhere by the add-on.

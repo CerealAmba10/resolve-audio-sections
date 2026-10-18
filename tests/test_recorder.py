@@ -20,7 +20,15 @@ except RuntimeError:
 EXTENSION = Path(__file__).resolve().parent.parent / 'recorder'
 PAGES = {
     '/upload': b'<title>New post</title><input id="cap" aria-label="Caption"><div contenteditable="true" id="ed"></div>'
-               b'<button id="go">Schedule post</button>',
+               b'<button id="go">Schedule post</button><button id="early">Clicked before watching</button>'
+               # Fansly-style: a plain box with a click handler that opens a menu of plain boxes a moment later.
+               b'<div id="more" style="cursor:pointer">More options</div>'
+               b'<script>more.onclick = () => setTimeout(() => { const m = document.createElement("div");'
+               b' m.innerHTML = \'<div style="cursor:pointer">Set price</div><div style="cursor:pointer">Schedule for later</div>\';'
+               b' document.body.append(m); }, 200);'
+               b' go.onclick = () => { fetch("/api/v1/post", {method: "POST", headers: {"Content-Type": "application/json"},'
+               b' body: JSON.stringify({content: "CAPTION-SECRET", price: 5, scheduledFor: 1790000000, mediaIds: ["123"]})});'
+               b' fetch("/api/v1/message", {method: "POST", body: JSON.stringify({content: "DM-SECRET"})}); };</script>',
     '/login': b'<input type="password" id="pw"><button id="in">Sign in</button>',
     '/start': b'<input type="email" id="em"><button id="next">Continue</button>',
 }
@@ -32,6 +40,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
         self.wfile.write(b'<!doctype html><body>' + PAGES.get(self.path.split('?')[0], b''))
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"success": true, "response": {"id": "9001", "price": 5}}')
 
     def log_message(self, *args):
         pass
@@ -76,7 +91,15 @@ class RecorderExtensionTests(unittest.TestCase):
                     bidi.call('script.evaluate', expression=code, target={'context': context}, awaitPromise=False)
                     time.sleep(0.5)
                 base = f'http://127.0.0.1:{port}'
+                start_tab = next(c['context'] for c in bidi.call('browsingContext.getTree')['contexts']
+                                 if c['url'].startswith('moz-extension://'))
+                go(base + '/upload')
+                js('early.click()')  # not watching yet: must not be recorded
+                bidi.call('script.evaluate', target={'context': start_tab}, awaitPromise=True,
+                          expression="browser.runtime.sendMessage({type: 'watch', on: true})")
                 go(base + '/upload?token=SECRET-TOKEN#access_token=HASH-TOKEN')
+                js('more.click()')
+                time.sleep(1)  # the menu opens after 200 ms; the recorder looks again at 700 ms
                 js("cap.value = 'TYPED-SECRET'; ed.innerText = 'EDITOR-SECRET'; ed.click()")
                 js('go.click()')
                 go(base + '/login')
@@ -110,6 +133,17 @@ class RecorderExtensionTests(unittest.TestCase):
             events = [json.loads(line) for line in files['events.jsonl'].decode().splitlines()]
             everything = files['events.jsonl'].decode() + files['network.jsonl'].decode()
             clicks = {e['target']['label']: e for e in events if e['kind'] == 'click'}
+            self.assertNotIn('Clicked before watching', clicks)  # only recorded while watching
+            self.assertIn('More options', clicks)  # a plain clickable box still counts as a button
+            opened = [c['label'] for e in events if e['kind'] == 'opened' for c in e['controls']]
+            self.assertIn('Set price', opened)  # the menu it opened was recorded
+            self.assertIn('Schedule for later', opened)
+            shapes = json.loads(files['shapes.json'])
+            self.assertEqual(shapes['POST /api/v1/post']['request'],
+                             {'content': 'string', 'price': 'number', 'scheduledFor': 'number', 'mediaIds': ['string']})
+            self.assertEqual(shapes['POST /api/v1/post']['response'], {'success': 'boolean', 'response': {'id': 'string', 'price': 'number'}})
+            self.assertFalse([k for k in shapes if 'message' in k])  # messages are never looked at
+            self.assertNotIn('CAPTION-SECRET', files['shapes.json'].decode())  # names and types only, never values
             self.assertIn('Schedule post', clicks)
             self.assertIn('Caption', [c['label'] for c in clicks['Schedule post']['controls']])
             self.assertTrue(files['shots/' + clicks['Schedule post']['shot']].startswith(b'\x89PNG'))

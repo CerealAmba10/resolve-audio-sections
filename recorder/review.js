@@ -27,7 +27,8 @@ document.getElementById('save').onclick = async () => {
     return JSON.stringify(step);
   });
   files.unshift({name: 'events.jsonl', data: text(events.join('\n') + '\n')},
-                {name: 'network.jsonl', data: text(bg.network.map(r => JSON.stringify(r)).join('\n') + '\n')});
+                {name: 'network.jsonl', data: text(bg.network.map(r => JSON.stringify(r)).join('\n') + '\n')},
+                {name: 'shapes.json', data: text(JSON.stringify(bg.shapes, null, 2))});
   const local = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
   const stamp = local.toISOString().slice(0, 16).replace(/[:T]/g, '-');
   const url = URL.createObjectURL(makeZip(files));

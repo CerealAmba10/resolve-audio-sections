@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Upload Layout Recorder",
-  "version": "1.0",
-  "description": "Records which buttons and fields you use on upload pages. Never records typed text, passwords or sign-in screens. Nothing is sent anywhere; you save a zip yourself.",
+  "version": "1.1",
+  "description": "Records which buttons, menus and fields you use on upload pages, and the field names (never the values) the site's pages send. Never records typed text, passwords or sign-in screens. Nothing is sent anywhere; you save a zip yourself.",
   "browser_specific_settings": {
     "gecko": {
       "id": "upload-layout-recorder@audio-sections",
@@ -13,6 +13,7 @@
     "<all_urls>",
     "tabs",
     "webRequest",
+    "webRequestBlocking",
     "downloads"
   ],
   "background": {
@@ -36,6 +37,7 @@
     }
   ],
   "browser_action": {
-    "default_title": "Upload Layout Recorder: review and save"
+    "default_title": "Upload Layout Recorder",
+    "default_popup": "popup.html"
   }
 }

@@ -29,14 +29,38 @@
       options: el.tagName === 'SELECT' ? [...el.options].map(o => o.text).slice(0, 60) : undefined,
       checked: el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.getAttribute('aria-checked') || undefined};
   };
-  const controls = () => [...document.querySelectorAll(SEL)]
+  // Sites like Fansly build buttons from plain boxes with click handlers: count anything showing a pointer cursor
+  // (but not the inner parts of something already counted) as a control too.
+  const pointer = el => getComputedStyle(el).cursor === 'pointer';
+  const clickable = () => {
+    const found = new Set(document.querySelectorAll(SEL));
+    for (const el of document.querySelectorAll('body *')) {
+      if (found.size > 800) break;
+      if (!found.has(el) && pointer(el) && !(el.parentElement && pointer(el.parentElement))) found.add(el);
+    }
+    return [...found];
+  };
+  const controls = () => clickable()
     .filter(el => { const b = el.getBoundingClientRect(); return b.width && b.height || el.type === 'file'; })
-    .slice(0, 400).map(describe);
-  const send = (kind, el) => browser.runtime.sendMessage({kind, url: location.origin + location.pathname,
-    title: document.title.slice(0, 80), target: el ? describe(el) : null, controls: controls(),
+    .slice(0, 500).map(describe);
+  const send = (kind, el, list = controls()) => browser.runtime.sendMessage({kind, url: location.origin + location.pathname,
+    title: document.title.slice(0, 80), target: el ? describe(el) : null, controls: list,
     sensitive: !!document.querySelector('input[type=password],input[type=email],input[autocomplete~=username],' +
       'input[autocomplete~=one-time-code],input[autocomplete~=current-password],input[inputmode=numeric][maxlength="6"]')});
-  document.addEventListener('click', e => send('click', e.target.closest(SEL) || e.target), true);
+  const target = el => el.closest(SEL) || (() => {
+    for (let node = el; node && node !== document.body; node = node.parentElement) if (pointer(node)) return node;
+    return el;
+  })();
+  document.addEventListener('click', e => {
+    const before = controls();
+    send('click', target(e.target), before);
+    // A moment later, record whatever the click opened (menus, panels, dialogs): only the controls that appeared.
+    const seen = new Set(before.map(c => c.path + c.label));
+    setTimeout(() => {
+      const added = controls().filter(c => !seen.has(c.path + c.label));
+      if (added.length) send('opened', null, added);
+    }, 700);
+  }, true);
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.type === 'file') send(`file chosen (${el.files.length})`, el);

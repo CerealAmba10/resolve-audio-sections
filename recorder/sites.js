@@ -5,6 +5,9 @@ const SITES = [
 ];
 const HOSTS = ['fansly.com', 'redgifs.com', 'pornhub.com'];
 
+// webRequest match patterns for the sites above (an IP address can't take a "*." prefix).
+const SITE_URLS = HOSTS.map(h => /^[\d.]+$/.test(h) ? `*://${h}/*` : `*://*.${h}/*`);
+
 function allowed(url) {
   try {
     const host = new URL(url).hostname;

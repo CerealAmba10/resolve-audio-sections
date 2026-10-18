@@ -1,0 +1,13 @@
+body { width: 300px; margin: 0; padding: 14px; font: 13px/1.45 "Segoe UI", system-ui, sans-serif; color: #f2eee8; background: #211e1b; }
+header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+header span { color: #a69d91; font-size: 12px; }
+.page { margin: 0 0 12px; padding: 7px 9px; border-radius: 7px; background: #2c2824; word-break: break-all; }
+.page.off { color: #a69d91; }
+button { font: inherit; cursor: pointer; }
+.go { width: 100%; padding: 9px; border: 0; border-radius: 8px; background: #f0b440; color: #2a1f0a; font-weight: 600; }
+.go:hover:not(:disabled) { background: #f5c25e; }
+.go.stop { background: #e5624b; color: #fff; }
+.go:disabled { background: #36312c; color: #8a8174; cursor: not-allowed; }
+.hint { color: #c9c1b6; margin: 10px 0 12px; }
+footer { display: flex; justify-content: space-between; border-top: 1px solid #3b3631; padding-top: 10px; }
+.link { background: none; border: 0; padding: 0; color: #e9e3da; text-decoration: underline; text-underline-offset: 3px; }
