@@ -124,9 +124,13 @@ class UpdateTests(unittest.TestCase):
         import sys
         from unittest.mock import MagicMock, patch
         new_exe = b'NEW-BUILD'
-        release_json = {'tag_name': 'v9.0.0', 'body': 'Notes', 'assets': [{
+        ours = {'tag_name': 'organizer-v9.0.0', 'body': 'Notes', 'assets': [{
             'name': organizer.ASSET, 'browser_download_url': 'https://example.invalid/ClipOrganizer.exe',
             'digest': 'sha256:' + hashlib.sha256(new_exe).hexdigest()}]}
+        # The same repo also publishes Audio Sections releases (plain vX.Y, newer and without our exe): skip those.
+        release_json = [{'tag_name': 'v10.0', 'assets': [{'name': 'AudioSectionsLite-Windows.zip'}]},
+                        {'tag_name': 'organizer-v2.0.0', 'draft': True, 'assets': ours['assets']}, ours,
+                        {'tag_name': 'organizer-v1.5.0', 'assets': ours['assets']}]
 
         def fake_urlopen(request, timeout=0):
             body = json.dumps(release_json).encode() if 'api.github.com' in request.full_url else new_exe

@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import library
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
 ASSET = 'DuckysClipOrganizer.exe'
@@ -50,18 +50,28 @@ def pick_folder():
     sys.stdout.write(str(Path(folder)) if folder else '')
 
 
+TAG = 'organizer-v'  # this app's release tags; the repo's plain vX.Y releases are Audio Sections
+
+
 def version_tuple(text):
-    return tuple(int(n) for n in text.lstrip('v').split('.') if n.isdigit())
+    return tuple(int(n) for n in text.split('-v')[-1].lstrip('v').split('.') if n.isdigit())
 
 
 def latest_release():
-    request = urllib.request.Request(f'https://api.github.com/repos/{REPO}/releases/latest',
+    """The newest Ducky's Clip Organizer release (tagged organizer-vX.Y.Z, with the exe attached)."""
+    request = urllib.request.Request(f'https://api.github.com/repos/{REPO}/releases?per_page=50',
                                      headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'ClipOrganizer'})
     with urllib.request.urlopen(request, timeout=10) as response:
-        release = json.load(response)
-    asset = next((a for a in release.get('assets', []) if a['name'] == ASSET), None)
-    return dict(version=release['tag_name'].lstrip('v'), notes=release.get('body') or '', asset=asset,
-                available=version_tuple(release['tag_name']) > version_tuple(VERSION) and asset is not None)
+        releases = json.load(response)
+    ours = [r for r in releases if r.get('tag_name', '').startswith(TAG) and not r.get('draft') and not r.get('prerelease')
+            and any(a['name'] == ASSET for a in r.get('assets', []))]
+    if not ours:
+        return dict(version=VERSION, notes='', asset=None, available=False)
+    release = max(ours, key=lambda r: version_tuple(r['tag_name']))
+    asset = next(a for a in release['assets'] if a['name'] == ASSET)
+    version = release['tag_name'][len(TAG):]
+    return dict(version=version, notes=release.get('body') or '', asset=asset,
+                available=version_tuple(version) > version_tuple(VERSION))
 
 
 def install_update(release, server):

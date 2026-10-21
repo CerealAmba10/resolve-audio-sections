@@ -20,4 +20,4 @@ Copy-Item -LiteralPath 'RECORDER-HOW-TO.txt' -Destination 'dist/Upload Layout Re
 Remove-Item -LiteralPath 'dist/Upload Layout Recorder.zip' -ErrorAction SilentlyContinue
 Compress-Archive -Path 'dist/Upload Layout Recorder' -DestinationPath 'dist/Upload Layout Recorder.zip'
 Write-Host "Built dist/DuckysClipOrganizer.exe, dist/Post Helper/post-helper.xpi and dist/Upload Layout Recorder.zip"
-Write-Host "To ship an update: bump VERSION in organizer.py, rebuild, then create a GitHub release tagged vX.Y.Z with DuckysClipOrganizer.exe attached."
+Write-Host "To ship an update: raise VERSION in organizer.py, then run release_organizer.ps1."
