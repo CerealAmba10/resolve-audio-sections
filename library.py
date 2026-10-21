@@ -44,11 +44,18 @@ def connect(home=DATA):
             PRIMARY KEY(platform, kind, name));
         CREATE TABLE IF NOT EXISTS site_post_days(platform TEXT, post_id TEXT, day TEXT, counters TEXT,
             PRIMARY KEY(platform, post_id, day));
+        -- Manual uploads: a monthly pool of random clips per folder and site; post is set once it's uploaded.
+        CREATE TABLE IF NOT EXISTS rotation(id INTEGER PRIMARY KEY, folder TEXT, platform TEXT, month TEXT, fp TEXT,
+            post INTEGER);
     """)
     if 'url' not in {r['name'] for r in db.execute('PRAGMA table_info(site_posts)')}:
         db.execute('ALTER TABLE site_posts ADD COLUMN url TEXT')
     if 'autosort' not in {r['name'] for r in db.execute('PRAGMA table_info(folders)')}:
         db.execute('ALTER TABLE folders ADD COLUMN autosort INTEGER DEFAULT 0')
+    if 'parent' not in {r['name'] for r in db.execute('PRAGMA table_info(clips)')}:
+        db.execute('ALTER TABLE clips ADD COLUMN parent TEXT')  # a teaser's main clip
+    if 'moved' not in {r['name'] for r in db.execute('PRAGMA table_info(batches)')}:
+        db.execute('ALTER TABLE batches ADD COLUMN moved INTEGER DEFAULT 0')  # moved, not copied: still library files
     return db
 
 
@@ -79,8 +86,103 @@ def rel(folder, path):
     return Path(path).resolve().relative_to(Path(folder).resolve()).as_posix()
 
 
-def batch_dirs(db, folder):
-    return [r['path'] for r in db.execute('SELECT path FROM batches WHERE folder=?', (str(folder),))]
+def batch_dirs(db, folder, moved=False):
+    """Folders of copies, left out of the library. Folders clips were moved into stay in it, but with
+    moved=True they're listed too, so sorting leaves them where they were put."""
+    return [r['path'] for r in db.execute('SELECT path FROM batches WHERE folder=? AND (moved=0 OR ?)',
+                                          (str(folder), moved))]
+
+
+DISCORD_ID = re.compile(r'[\s_-]*(?<!\d)(\d{17,20})(?!\d)')  # Discord attachment IDs; clip numbers are never this long
+TEASER_WORD = re.compile(r'[\s_.(\[-]*\bteaser\b[\s_.)\]-]*', re.I)
+TEASER_T = re.compile(r'(?<=\d)T\b|\bT(?=\d)|\bT\b')  # "12T", "T12" or "12 T"; not the T in 20261005T1200
+
+
+def clean_stem(stem):
+    """The name without Discord IDs: "IRL 1422922786464071841" -> "IRL"."""
+    return re.sub(r'\s+', ' ', DISCORD_ID.sub(' ', stem)).strip(' _-') or stem
+
+
+def key(stem):
+    return re.sub(r'[\s_.-]+', ' ', clean_stem(stem)).strip().lower()
+
+
+def teaser_key(stem):
+    """For a teaser ("X teaser", "X 12T"), the key of the clip it belongs to; None for anything else."""
+    stem = clean_stem(stem)
+    for pattern in (TEASER_WORD, TEASER_T):
+        if pattern.search(stem):
+            return key(pattern.sub(' ', stem, count=1))
+    return None
+
+
+def snowflake(path):
+    found = DISCORD_ID.findall(path.stem)
+    return int(found[-1]) if found else None
+
+
+TEASER_SECONDS = 50
+
+
+def pairs(files, length=None):
+    """{teaser path: clip path}: a teaser goes with the clip of the same name in the same folder. When several
+    share a name, it goes with the one downloaded closest to it (nearest Discord ID, else modified time).
+    With length (path -> seconds), a same-name video under 50 seconds is taken as the teaser of a longer one,
+    and nothing 50 seconds or longer is ever a teaser, whatever its name says."""
+    seconds = lambda p: (length(p) or 0) if length and p.suffix.lower() in VIDEO else 0
+    named = lambda p: teaser_key(p.stem) if seconds(p) < TEASER_SECONDS else None
+    clips = {}
+    for path in files:
+        if named(path) is None:
+            clips.setdefault((path.parent, key(path.stem)), []).append(path)
+    when = lambda p: snowflake(p) or p.stat().st_mtime
+    found = {}
+    same = {}  # by length, "Gym" and "Gym (2)" count as the same name: the (2) only marks a duplicate
+    for (parent, k), group in clips.items() if length else ():
+        same.setdefault((parent, re.sub(r' \(\d+\)$', '', k)), []).extend(group)
+    for group in same.values():
+        short = [p for p in group if 0 < seconds(p) < TEASER_SECONDS]
+        full = [p for p in group if p not in short]
+        for teaser in short if full else ():
+            options = [c for c in full if c not in found.values()]
+            if options:
+                found[teaser] = min(options, key=lambda c: abs(when(c) - when(teaser)))
+                clips[(teaser.parent, key(teaser.stem))].remove(teaser)
+    for path in files:
+        k = named(path)
+        options = [c for c in clips.get((path.parent, k), []) if c not in found.values()] if k is not None else []
+        if options:
+            found[path] = min(options, key=lambda c: abs(when(c) - when(path)))
+    return found
+
+
+def cleanup_plan(folder, skip=(), length=None):
+    """[(old, new)] taking Discord IDs out of downloaded names. Clips that end up with the same name are numbered
+    "IRL", "IRL (2)"... and each teaser is named after its clip: "IRL (2) teaser"."""
+    files = media_files(folder, skip)
+    teasers = pairs(files, length)
+    taken = {}  # (folder, lowercase name) -> path
+    names = {}
+    for path in sorted((p for p in files if p not in teasers), key=lambda p: (snowflake(p) is not None, snowflake(p) or 0)):
+        stem, n = clean_stem(path.stem), 1
+        while (path.parent, (stem + path.suffix).lower()) in taken:
+            n += 1
+            stem = f'{clean_stem(path.stem)} ({n})'
+        taken[(path.parent, (stem + path.suffix).lower())] = path
+        names[path] = stem
+    for teaser, clip in teasers.items():  # keep a teaser name that already matches its clip ("12T", "X teaser")
+        mine = clean_stem(teaser.stem)
+        names[teaser] = mine if teaser_key(mine) == key(names[clip]) else f'{names[clip]} teaser'
+    plan, finals = [], {}
+    for path in files:
+        new = rel(folder, path.with_name(names[path] + path.suffix.lower()))
+        finals.setdefault(new.lower(), []).append(rel(folder, path))
+        if new != rel(folder, path):
+            plan.append((rel(folder, path), new))
+    clashes = [names for names in finals.values() if len(names) > 1]
+    if clashes:
+        raise ValueError('These files would get the same name: ' + '; '.join(', '.join(n) for n in clashes[:5]))
+    return plan
 
 
 def scan(db, folder):
@@ -89,15 +191,18 @@ def scan(db, folder):
     now = datetime.now().strftime(FMT)
     db.execute('INSERT OR IGNORE INTO folders(path, added) VALUES(?, ?)', (folder, now))
     known = {(r['name'], r['size'], r['mtime']): r['fp'] for r in db.execute('SELECT * FROM clips WHERE folder=?', (folder,))}
-    seen = set()
-    for path in media_files(folder, batch_dirs(db, folder)):
+    seen, fps = set(), {}
+    files = media_files(folder, batch_dirs(db, folder))
+    for path in files:
         stat = path.stat()
         name = rel(folder, path)
-        fp = known.get((name, stat.st_size, stat.st_mtime)) or fingerprint(path)
+        fp = fps[path] = known.get((name, stat.st_size, stat.st_mtime)) or fingerprint(path)
         seen.add(fp)
         db.execute("""INSERT INTO clips(fp, folder, name, size, mtime, added) VALUES(?, ?, ?, ?, ?, ?)
             ON CONFLICT(fp) DO UPDATE SET folder=excluded.folder, name=excluded.name, size=excluded.size,
             mtime=excluded.mtime, missing=0""", (fp, folder, name, stat.st_size, stat.st_mtime, now))
+    db.execute('UPDATE clips SET parent=NULL WHERE folder=?', (folder,))
+    db.executemany('UPDATE clips SET parent=? WHERE fp=?', [(fps[clip], fps[teaser]) for teaser, clip in pairs(files).items()])
     gone = [r['fp'] for r in db.execute('SELECT fp FROM clips WHERE folder=?', (folder,)) if r['fp'] not in seen]
     db.executemany('UPDATE clips SET missing=1 WHERE fp=?', [(fp,) for fp in gone])
     db.commit()
@@ -123,7 +228,7 @@ def rename_plan(folder, prefix, skip=()):
     return plan
 
 
-TOKEN = re.compile(r'\{(N(?::(\d+))?|DATE|NAME)\}')
+TOKEN = re.compile(r'\{(N(?::(\d+))?|DATE|NAME|T)\}')
 DATES = [(re.compile(r'(?<!\d)((?:19|20)\d{2})[-_. ]?(\d{2})[-_. ]?(\d{2})(?!\d)'), 'ymd'),
          (re.compile(r'(?<!\d)(\d{1,2})[-_.](\d{1,2})[-_.](\d{4}|\d{2})(?!\d)'), 'mdy')]
 
@@ -151,27 +256,39 @@ def natural(path):
     return [int(part) if part.isdigit() else part for part in re.split(r'(\d+)', str(path).lower())]
 
 
-def template_plan(folder, template, skip=()):
+def template_plan(folder, template, skip=(), length=None):
     """Bulk rename from a pattern such as "SFW {N} {DATE}".
     {N}: 1, 2, 3... in alphabetical order of the current names (folder by folder); {N:3} pads to 3 digits.
     {DATE}: the date in the file's name as MM-DD-YY (the file's modified date if the name has none).
-    {NAME}: the current name. Returns ([(old, new)], notes)."""
+    {NAME}: the current name.
+    {T}: "T" for a teaser (paired with its clip, or any video under 50 seconds), nothing for other clips; a teaser
+    paired with clip 12 takes number 12. Without {T}, paired teasers get "12T" in place of {N}.
+    Returns ([(old, new)], notes)."""
     template = template.strip()
     if re.search(r'[<>:"/\\|?*]', TOKEN.sub('', template)):
         raise ValueError('Use a name without < > : " / \\ | ? *')
     if not re.search(r'\{N(:\d+)?\}|\{NAME\}', template):
         raise ValueError('Add {N} or {NAME} so every file ends up with a different name.')
-    files = sorted(media_files(folder, skip), key=lambda p: natural(rel(folder, p)))
-    assigned = {path: n for n, path in enumerate(files, 1)}
+    files = sorted(media_files(folder, skip), key=lambda p: natural(rel(folder, p.with_suffix(''))))
+    teasers = pairs(files, length)
+    assigned = {path: n for n, path in enumerate((p for p in files if p not in teasers), 1)}
+    marked = '{T}' in template
+    seconds = lambda p: (length(p) or 0) if length and p.suffix.lower() in VIDEO else 0
     plan, finals, notes = [], {}, []
     for path in files:
-        date = name_date(path.stem)[0] or datetime.fromtimestamp(path.stat().st_mtime)
+        source = teasers.get(path, path)  # a teaser takes its clip's date, so the pair keeps matching
+        date = name_date(source.stem)[0] or datetime.fromtimestamp(source.stat().st_mtime)
 
         def fill(match):
             if match.group(1) == 'DATE':
                 return date.strftime('%m-%d-%y')
             if match.group(1) == 'NAME':
                 return path.stem
+            if match.group(1) == 'T':
+                short = 0 < seconds(path) < TEASER_SECONDS and path not in teasers.values()  # a clip with a teaser isn't one
+                return 'T' if path in teasers or short else ''
+            if path in teasers:  # the teaser of clip 12 is "12T"
+                return str(assigned[teasers[path]]).zfill(int(match.group(2) or 0)) + ('' if marked else 'T')
             return str(assigned[path]).zfill(int(match.group(2) or 0))
         new = rel(folder, path.with_name(re.sub(r'\s+', ' ', TOKEN.sub(fill, template)).strip() + path.suffix.lower()))
         finals.setdefault(new.lower(), []).append(rel(folder, path))
@@ -187,8 +304,11 @@ def sort_plan(folder, skip=()):
     """Move clips into a folder per year with a subfolder per month: "2025/10 October/clip.mp4".
     The date comes from the file name (2025-10-05, 10-05-25...), else the date the file was saved."""
     plan, finals = [], {}
-    for path in media_files(folder, skip):
-        date = name_date(path.stem)[0] or datetime.fromtimestamp(path.stat().st_mtime)
+    files = media_files(folder, skip)
+    teasers = pairs(files)
+    for path in files:
+        source = teasers.get(path, path)  # a teaser goes where its clip goes
+        date = name_date(source.stem)[0] or datetime.fromtimestamp(source.stat().st_mtime)
         old, new = rel(folder, path), f"{date.year}/{date.strftime('%m %B')}/{path.name}"
         finals.setdefault(new.lower(), []).append(old)
         if old.lower() != new.lower():
@@ -228,7 +348,7 @@ def sync(db, folder):
     row = db.execute('SELECT autosort FROM folders WHERE path=?', (str(Path(folder).resolve()),)).fetchone()
     if row and row['autosort']:
         try:
-            plan = sort_plan(folder, batch_dirs(db, folder))
+            plan = sort_plan(folder, batch_dirs(db, folder, moved=True))
         except ValueError:
             return count  # name clash: leave it for the person to sort out in Organize
         if plan:
@@ -270,22 +390,54 @@ def batch_name(root, now):
     return name
 
 
-def make_batch(db, folder, chosen, now, name=None):
-    """Copy the chosen clips into a new subfolder of the library folder and remember the batch."""
+ORDERS = ('rules', 'name', 'name-desc', 'oldest', 'newest', 'random')
+
+
+def choose(clips, used, count, now, order='rules', recent_days=14, window=5, rng=random):
+    """[(clip, reason)]: the batch rules (see pick), or simply the first `count` in name, date or random order."""
+    if order == 'rules':
+        return pick(clips, used, count, now, recent_days, window, rng)
+    if order not in ORDERS:
+        raise ValueError('Unknown order.')
+    clips = list(clips)  # oldest first
+    if order in ('name', 'name-desc'):
+        clips.sort(key=lambda c: natural(Path(c['name']).with_suffix('')), reverse=order == 'name-desc')
+    elif order == 'newest':
+        clips.reverse()
+    elif order == 'random':
+        rng.shuffle(clips)
+    return [(c, f"last used {(now - used[c['fp']]).days} days ago" if c['fp'] in used else 'never posted')
+            for c in clips[:count]]
+
+
+def make_batch(db, folder, chosen, now, name=None, move=False):
+    """Copy (or move) the chosen clips, each with its teaser, into a subfolder of the library folder and remember
+    the batch. Copies are left out of the library; moved clips stay in it, history and all."""
     target = Path(folder) / (name or batch_name(folder, now))
-    target.mkdir()
+    target.mkdir(exist_ok=move)  # moving into an existing folder ("oct") just adds to it
     created = now.strftime(FMT)
-    batch = db.execute('INSERT INTO batches(folder, path, created) VALUES(?, ?, ?)',
-                       (str(folder), str(target), created)).lastrowid
-    for clip, _ in chosen:
-        name = Path(clip['name']).name
-        stem, n = Path(name).stem, 1
-        while (target / name).exists():  # same file name from two subfolders
+    batch = db.execute('INSERT INTO batches(folder, path, created, moved) VALUES(?, ?, ?, ?)',
+                       (str(folder), str(target), created, int(move))).lastrowid
+    transfer = shutil.move if move else shutil.copy2
+
+    def place(source):
+        name = source.name
+        n = 1
+        while (target / name).exists() and (target / name) != source:  # same file name from two subfolders
             n += 1
-            name = f'{stem} ({n}){Path(clip["name"]).suffix}'
-        shutil.copy2(Path(clip['folder']) / clip['name'], target / name)
+            name = f'{source.stem} ({n}){source.suffix}'
+        if target / name != source:
+            transfer(source, target / name)
+        return name
+    for clip, _ in chosen:
+        name = place(Path(clip['folder']) / clip['name'])
         db.execute('INSERT INTO batch_items(batch, fp, name) VALUES(?, ?, ?)', (batch, clip['fp'], name))
+        for teaser in db.execute('SELECT folder, name FROM clips WHERE parent=? AND missing=0', (clip['fp'],)).fetchall():
+            if (Path(teaser['folder']) / teaser['name']).is_file():
+                place(Path(teaser['folder']) / teaser['name'])
     db.commit()
+    if move:
+        scan(db, folder)  # the library follows the files to their new folder
     return batch, target
 
 
@@ -306,6 +458,63 @@ def record_post(db, platform, name=None, fp=None, at=None, source='manual'):
         ORDER BY at LIMIT 1)""", (fp, platform))
     db.commit()
     return True
+
+
+VIDEO = {'.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi'}
+
+
+def fill_rotation(db, folder, platform, month, size, rng=random):
+    """Add `size` random videos to a month's pool: ones never posted on this site first, nothing already in it."""
+    taken = {r['fp'] for r in db.execute('SELECT fp FROM rotation WHERE folder=? AND platform=? AND month=?',
+                                         (folder, platform, month))}
+    posted = {r['fp'] for r in db.execute('SELECT fp FROM posts WHERE platform=?', (platform,))}
+    clips = [r['fp'] for r in db.execute('SELECT fp, name FROM clips WHERE folder=? AND missing=0 AND parent IS NULL '
+                                         'ORDER BY name', (folder,))
+             if Path(r['name']).suffix.lower() in VIDEO and r['fp'] not in taken]
+    fresh, rest = [fp for fp in clips if fp not in posted], [fp for fp in clips if fp in posted]
+    rng.shuffle(fresh)
+    rng.shuffle(rest)
+    db.executemany('INSERT INTO rotation(folder, platform, month, fp) VALUES(?, ?, ?, ?)',
+                   [(folder, platform, month, fp) for fp in (fresh + rest)[:size]])
+    db.commit()
+
+
+def rotation(db, folder, platform, now, size=30, rng=random):
+    """This month's pool for a site, picked the first time it's opened in a new month."""
+    month = now.strftime('%Y-%m')
+    args = (folder, platform, month)
+    if not db.execute('SELECT 1 FROM rotation WHERE folder=? AND platform=? AND month=?', args).fetchone():
+        fill_rotation(db, folder, platform, month, size, rng)
+    return [dict(r) for r in db.execute("""SELECT r.id, r.fp, c.name, c.missing, p.at uploaded FROM rotation r
+        JOIN clips c ON c.fp=r.fp LEFT JOIN posts p ON p.id=r.post
+        WHERE r.folder=? AND r.platform=? AND r.month=? ORDER BY r.id""", args)]
+
+
+def refresh_rotation(db, folder, platform, now, size=30, rng=random):
+    """Drop everything not uploaded yet from this month's pool and pick `size` new videos."""
+    month = now.strftime('%Y-%m')
+    db.execute('DELETE FROM rotation WHERE folder=? AND platform=? AND month=? AND post IS NULL', (folder, platform, month))
+    fill_rotation(db, folder, platform, month, size, rng)
+
+
+def mark_uploaded(db, ids, now):
+    """Log each queued pool item as posted on its site today; the post carries the site and the month."""
+    ids = [int(i) for i in ids]
+    if not ids:
+        return
+    for row in db.execute(f"SELECT * FROM rotation WHERE post IS NULL AND id IN ({','.join('?' * len(ids))})", ids).fetchall():
+        post = db.execute('INSERT INTO posts(fp, platform, at, source) VALUES(?, ?, ?, ?)',
+                          (row['fp'], row['platform'], now.strftime(FMT), 'manual upload')).lastrowid
+        db.execute('UPDATE rotation SET post=? WHERE id=?', (post, row['id']))
+    db.commit()
+
+
+def unmark_uploaded(db, item):
+    row = db.execute('SELECT post FROM rotation WHERE id=?', (item,)).fetchone()
+    if row and row['post']:
+        db.execute('DELETE FROM posts WHERE id=?', (row['post'],))
+        db.execute('UPDATE rotation SET post=NULL WHERE id=?', (item,))
+        db.commit()
 
 
 POST_URLS = {'Fansly': 'https://fansly.com/post/{id}'}  # add RedGifs/Pornhub once their post pages are known

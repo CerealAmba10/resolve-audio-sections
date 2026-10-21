@@ -15,6 +15,7 @@
       <a href="#library" data-view="library">Library</a>
       <a href="#organize" data-view="organize">Organize</a>
       <a href="#batch" data-view="batch">Batch</a>
+      <a href="#manual" data-view="manual">Manual uploads</a>
       <a href="#activity" data-view="activity">Activity</a>
       <a href="#sites" data-view="sites">Sites</a>
     </nav>
@@ -75,6 +76,15 @@
     </section>
 
     <section class="view" id="view-organize" hidden>
+      <h2 class="section-title cleanup-title">Clean up downloads</h2>
+      <p class="hint">Takes the long Discord ID out of downloaded names: <b>IRL 1422922786464071841.mp4</b> becomes
+        <b>IRL.mp4</b>. A teaser (“teaser” in the name, or a capital T by its number like <b>12T</b>) is matched to the clip
+        with the same name and named after it, so it stays with that clip: it moves and copies with it, and isn’t picked
+        on its own.</p>
+      <div class="rename-preview" id="cleanup-preview"></div>
+      <div class="actions"><button class="primary" id="apply-cleanup" disabled>Clean up names</button></div>
+
+      <h2 class="section-title sort-title">Rename</h2>
       <div class="form-row">
         <label class="field"><span>Rename everything to</span>
           <input id="prefix" placeholder="SFW {N} {DATE}" autocomplete="off" spellcheck="false"></label>
@@ -82,6 +92,7 @@
           <button class="token" data-token="{N}" title="1, 2, 3… in alphabetical order">{N} number</button>
           <button class="token" data-token="{N:3}" title="The same number padded to 3 digits: 001">{N:3} padded</button>
           <button class="token" data-token="{DATE}" title="The date in each file's name as MM-DD-YY">{DATE} MM-DD-YY</button>
+          <button class="token" data-token="{T}" title="T on teasers (paired with a clip, or under 50 seconds), nothing on other clips">{T} teaser</button>
           <button class="token" data-token="{NAME}" title="The current file name">{NAME} current name</button>
         </div>
         <p class="hint" id="prefix-example"></p>
@@ -101,6 +112,18 @@
     <section class="view" id="view-batch" hidden>
       <div class="batch-controls">
         <label class="field"><span>Clips</span><input type="number" id="count" min="1" max="1000" value="20"></label>
+        <label class="field"><span>Pick</span><select id="order">
+          <option value="rules">By the batch rules</option>
+          <option value="name">Name A–Z</option>
+          <option value="name-desc">Name Z–A</option>
+          <option value="oldest">Oldest first</option>
+          <option value="newest">Newest first</option>
+          <option value="random">Random</option>
+        </select></label>
+        <label class="field"><span>Then</span><select id="transfer">
+          <option value="copy">Copy into the folder</option>
+          <option value="move">Move into the folder</option>
+        </select></label>
         <label class="field"><span>Skip clips used in the last</span>
           <span class="with-unit"><input type="number" id="recent" min="0" max="365" value="14"><em>days</em></span></label>
         <label class="field"><span>Variety</span>
@@ -111,13 +134,34 @@
         <legend>Also plan posts for Post Helper, with a preset for each site</legend>
       </fieldset>
       <div class="batch-head">
-        <p class="rules">Never-posted clips first, then the longest-rested, picked with a little variety, never anything recent.</p>
+        <p class="rules" id="rules">Never-posted clips first, then the longest-rested, picked with a little variety, never anything recent.</p>
         <button class="ghost" id="reshuffle">Reshuffle</button>
       </div>
       <ol class="batch-list" id="batch-list"></ol>
       <div class="actions sticky">
         <span id="batch-summary"></span>
         <button class="primary" id="create-batch" disabled>Create batch</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-manual" hidden>
+      <div class="toolbar">
+        <label class="field inline"><span>Site</span><select id="manual-site"></select></label>
+        <div class="segmented" role="radiogroup" aria-label="Show" id="manual-filter">
+          <button role="radio" data-show="" aria-checked="true">All</button>
+          <button role="radio" data-show="queued" aria-checked="false">Queued</button>
+          <button role="radio" data-show="uploaded" aria-checked="false">Uploaded</button>
+        </div>
+        <span class="summary" id="manual-summary"></span>
+      </div>
+      <p class="hint">30 random videos a month for each site, ones never posted there first. Upload them by hand, then mark
+        them uploaded: each is logged with the site and the month it went up, and greys out until next month's pool.</p>
+      <ol class="batch-list manual-list" id="manual-list"></ol>
+      <p class="empty" id="manual-empty" hidden>No videos in this folder to pick from.</p>
+      <div class="actions sticky">
+        <label class="check"><input type="checkbox" id="manual-all"> Select all queued</label>
+        <button class="ghost" id="manual-refresh">New rotation</button>
+        <button class="primary" id="manual-mark" disabled>Mark uploaded</button>
       </div>
     </section>
 

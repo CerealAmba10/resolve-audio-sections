@@ -154,6 +154,101 @@ class FolderTests(unittest.TestCase):
         self.assertEqual(posts[0]['url'], 'https://fansly.com/post/900')  # each post's link is kept with its clip
         self.assertEqual(self.db.execute('SELECT COUNT(*) FROM site_post_days').fetchone()[0], 2)
 
+    def fill(self, names):
+        for name in list(self.folder.iterdir()):
+            name.unlink()
+        for i, name in enumerate(names):
+            (self.folder / name).write_bytes(name.encode())
+            os.utime(self.folder / name, (1000 + i, 1000 + i))
+
+    def test_cleanup_downloads_and_teasers(self):
+        self.fill(['IRL 1422922786464071841.mp4', 'IRL teaser 1422922786464071842.mp4', 'IRL 1422922786464079999.mp4',
+                   'IRL Teaser_1422922786464080000.mp4', 'Beach 12.mp4', 'Beach 12T.mp4', 'IMG_20261005T1200.mp4'])
+        plan = library.cleanup_plan(self.folder)
+        self.assertEqual(dict(plan), {'IRL 1422922786464071841.mp4': 'IRL.mp4',
+                                      'IRL teaser 1422922786464071842.mp4': 'IRL teaser.mp4',  # nearest ID = same post
+                                      'IRL 1422922786464079999.mp4': 'IRL (2).mp4',
+                                      'IRL Teaser_1422922786464080000.mp4': 'IRL (2) teaser.mp4'})
+        library.apply_renames(self.db, self.folder, plan)
+        parent = {r['name']: r['parent'] for r in self.db.execute('SELECT name, parent FROM clips')}
+        fp = {r['name']: r['fp'] for r in self.db.execute('SELECT name, fp FROM clips')}
+        self.assertEqual({n: p for n, p in parent.items() if p}, {'IRL teaser.mp4': fp['IRL.mp4'],
+                         'IRL (2) teaser.mp4': fp['IRL (2).mp4'], 'Beach 12T.mp4': fp['Beach 12.mp4']})
+        self.assertIsNone(parent['IMG_20261005T1200.mp4'])  # a timestamp's T is not a teaser
+        plan, _ = library.template_plan(self.folder, 'SFW {N}')
+        self.assertEqual(dict(plan), {'Beach 12.mp4': 'SFW 1.mp4', 'Beach 12T.mp4': 'SFW 1T.mp4',
+                                      'IMG_20261005T1200.mp4': 'SFW 2.mp4', 'IRL.mp4': 'SFW 3.mp4',
+                                      'IRL teaser.mp4': 'SFW 3T.mp4', 'IRL (2).mp4': 'SFW 4.mp4',
+                                      'IRL (2) teaser.mp4': 'SFW 4T.mp4'})  # teasers take their clip's number + T
+        library.apply_renames(self.db, self.folder, plan)
+        self.assertEqual(self.db.execute("SELECT parent FROM clips WHERE name='SFW 4T.mp4'").fetchone()[0],
+                         self.db.execute("SELECT fp FROM clips WHERE name='SFW 4.mp4'").fetchone()[0])
+
+    def test_short_same_name_video_is_the_teaser(self):
+        self.fill(['Gym 1422922786464071841.mp4', 'Gym 1422922786464071900.mp4', 'Solo 1422922786464075000.mp4'])
+        seconds = {'Gym 1422922786464071841': 95, 'Gym 1422922786464071900': 20, 'Solo 1422922786464075000': 12}
+        plan = library.cleanup_plan(self.folder, length=lambda p: seconds[p.stem])
+        self.assertEqual(dict(plan), {'Gym 1422922786464071841.mp4': 'Gym.mp4', 'Gym 1422922786464071900.mp4': 'Gym teaser.mp4',
+                                      'Solo 1422922786464075000.mp4': 'Solo.mp4'})  # short but alone: a clip
+        self.assertEqual(dict(library.cleanup_plan(self.folder))['Gym 1422922786464071900.mp4'], 'Gym (2).mp4')  # no lengths
+
+    def test_t_token_marks_teasers_by_pair_or_length(self):
+        self.fill(['Gym.mp4', 'Gym (2).mp4', 'Run.mp4', 'Run teaser.mp4', 'Short.mp4', 'Long teaser.mp4'])
+        seconds = {'Gym': 95, 'Gym (2)': 20, 'Run': 80, 'Run teaser': 15, 'Short': 9, 'Long teaser': 120}
+        plan, _ = library.template_plan(self.folder, 'SFW {N}{T}', length=lambda p: seconds[p.stem])
+        self.assertEqual(dict(plan), {'Gym.mp4': 'SFW 1.mp4', 'Gym (2).mp4': 'SFW 1T.mp4',  # same name, 20s: its teaser
+                                      'Long teaser.mp4': 'SFW 2.mp4',  # 2 minutes: never a teaser
+                                      'Run.mp4': 'SFW 3.mp4', 'Run teaser.mp4': 'SFW 3T.mp4',
+                                      'Short.mp4': 'SFW 4T.mp4'})  # under 50 seconds, on its own
+        library.apply_renames(self.db, self.folder, plan)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM clips WHERE parent IS NOT NULL").fetchone()[0], 2)  # 4T has no clip
+        plan, _ = library.template_plan(self.folder, 'SFW {N} {T}', length=lambda p: 30)  # short clips with teasers: no T
+        self.assertEqual(plan[0], ('SFW 1T.mp4', 'SFW 1 T.mp4'))
+        library.apply_renames(self.db, self.folder, plan)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM clips WHERE parent IS NOT NULL").fetchone()[0], 2)  # "1 T" pairs
+
+    def test_move_into_named_folder_takes_teasers(self):
+        self.fill(['a.mp4', 'a teaser.mp4', 'b.mp4', 'c.mp4'])
+        library.scan(self.db, self.folder)
+        clips = [dict(r) for r in self.db.execute('SELECT * FROM clips WHERE parent IS NULL ORDER BY mtime')]
+        used = {clips[0]['fp']: NOW - timedelta(days=1)}
+        self.assertEqual([c['name'] for c, _ in library.choose(clips, used, 2, NOW, 'name-desc')], ['c.mp4', 'b.mp4'])
+        self.assertEqual([c['name'] for c, _ in library.choose(clips, used, 3, NOW, 'oldest')], ['a.mp4', 'b.mp4', 'c.mp4'])
+        self.assertEqual(library.choose(clips, used, 1, NOW, 'oldest')[0][1], 'last used 1 days ago')
+        library.make_batch(self.db, self.folder, library.choose(clips, used, 1, NOW, 'name'), NOW, 'oct', move=True)
+        self.assertEqual(sorted(p.name for p in (self.folder / 'oct').iterdir()), ['a teaser.mp4', 'a.mp4'])
+        self.assertEqual(sorted(r['name'] for r in self.db.execute('SELECT name FROM clips WHERE missing=0')),
+                         ['b.mp4', 'c.mp4', 'oct/a teaser.mp4', 'oct/a.mp4'])  # still in the library
+        library.make_batch(self.db, self.folder, [(c, '') for c in clips[1:2]], NOW, 'oct', move=True)  # adds to "oct"
+        self.assertTrue((self.folder / 'oct' / 'b.mp4').exists())
+        self.db.execute('UPDATE folders SET autosort=1')
+        library.sync(self.db, self.folder)
+        self.assertTrue((self.folder / 'oct' / 'a.mp4').exists())  # sorting leaves the moved folder alone
+
+    def test_monthly_manual_rotation(self):
+        for n in range(40):
+            (self.folder / f'v{n}.mp4').write_bytes(f'video {n}'.encode())
+        library.scan(self.db, self.folder)
+        folder = str(self.folder.resolve())
+        library.record_post(self.db, 'TikTok', name='v0.mp4')  # posted elsewhere: still fresh for Instagram
+        pool = library.rotation(self.db, folder, 'Instagram', NOW)
+        self.assertEqual(len(pool), 30)
+        self.assertTrue(all(p['name'].lower().endswith(('.mp4', '.mov')) for p in pool))  # videos only, no images
+        self.assertEqual(library.rotation(self.db, folder, 'Instagram', NOW), pool)  # same pool all month
+        library.mark_uploaded(self.db, [pool[0]['id'], pool[1]['id']], NOW)
+        library.mark_uploaded(self.db, [pool[0]['id']], NOW)  # twice: logged once
+        posts = self.db.execute("SELECT * FROM posts WHERE platform='Instagram'").fetchall()
+        self.assertEqual([(p['fp'], p['at'][:7]) for p in posts], [(pool[0]['fp'], '2026-10'), (pool[1]['fp'], '2026-10')])
+        library.unmark_uploaded(self.db, pool[1]['id'])
+        library.refresh_rotation(self.db, folder, 'Instagram', NOW)
+        fresh = library.rotation(self.db, folder, 'Instagram', NOW)
+        self.assertEqual(fresh[0]['fp'], pool[0]['fp'])  # the uploaded one stays, greyed out
+        self.assertEqual((len(fresh), sum(1 for p in fresh if p['uploaded'])), (31, 1))
+        self.assertEqual(len({p['fp'] for p in fresh}), 31)
+        self.assertNotEqual({p['fp'] for p in library.rotation(self.db, folder, 'Instagram', NOW + timedelta(days=31))},
+                            set())  # next month: a new pool
+        self.assertEqual(len(library.rotation(self.db, folder, 'TikTok', NOW)), 30)  # each site has its own
+
     def test_scan_flags_missing_files(self):
         library.scan(self.db, self.folder)
         (self.folder / 'b.mp4').unlink()

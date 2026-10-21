@@ -56,7 +56,7 @@ const label = key => {
 /* Routing and shell */
 function view() {
   const name = location.hash.slice(1) || 'library';
-  for (const v of ['welcome', 'library', 'organize', 'batch', 'activity', 'sites']) $(`view-${v}`).hidden = true;
+  for (const v of ['welcome', 'library', 'organize', 'batch', 'manual', 'activity', 'sites']) $(`view-${v}`).hidden = true;
   for (const a of document.querySelectorAll('.nav a')) {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
@@ -76,7 +76,8 @@ function view() {
   $('top-actions').replaceChildren(...(name === 'library' && folder ? [
     el('button', {class: 'ghost', onclick: run(rescan)}, 'Rescan'),
     el('button', {class: 'ghost', onclick: run(() => removeFolder(folder.path))}, 'Remove from library')] : []));
-  run({library: loadLibrary, organize: loadOrganize, batch: loadBatch, activity: loadActivity, sites: loadSites}[name])();
+  run({library: loadLibrary, organize: loadOrganize, batch: loadBatch, manual: loadManual, activity: loadActivity,
+       sites: loadSites}[name])();
 }
 
 async function refreshState() {
@@ -137,7 +138,8 @@ function renderLibrary() {
     'aria-selected': c.fp === state.selected ? 'true' : 'false', tabindex: 0,
     onclick: () => showDetail(c.fp), onkeydown: e => e.key === 'Enter' && showDetail(c.fp)},
     el('td', {}, thumb(c.fp)),
-    el('td', {}, el('div', {class: 'clip-name'}, c.name.split('/').pop()),
+    el('td', {}, el('div', {class: 'clip-name'}, c.name.split('/').pop(),
+        c.teaser ? el('span', {class: 'tag teaser-tag', title: c.teaser.split('/').pop()}, '+ teaser') : null),
       c.name.includes('/') ? el('div', {class: 'muted small'}, c.name.split('/').slice(0, -1).join(' / ')) : null),
     el('td', {}, el('span', {class: `status ${c.status}`}, STATUS[c.status])),
     el('td', {}, el('div', {class: 'posted'}, Object.keys(c.posts).length ? Object.entries(c.posts).map(([p, v]) =>
@@ -200,6 +202,33 @@ function loadOrganize() {
   $('autosort').checked = !!folder?.autosort;
   previewRename();
   run(previewSort)();
+  run(previewCleanup)();
+}
+
+async function previewCleanup() {
+  const box = $('cleanup-preview');
+  try {
+    const {plan} = await api('/api/cleanup', {folder: state.folder});
+    movesList(box, plan, 'No Discord IDs or teasers to tidy up.');
+    $('apply-cleanup').disabled = !plan.length;
+    $('apply-cleanup').textContent = plan.length ? `Clean up ${plan.length} name${plan.length === 1 ? '' : 's'}` : 'Clean up names';
+  } catch (e) {
+    box.replaceChildren(el('p', {}, e.message));
+    $('apply-cleanup').disabled = true;
+  }
+}
+
+async function applyCleanup() {
+  const button = $('apply-cleanup');
+  button.classList.add('busy');
+  try {
+    const {plan} = await api('/api/cleanup', {folder: state.folder, apply: true});
+    toast(`Cleaned up ${plan.length} names.`);
+    await refreshState();
+    loadOrganize();
+  } finally {
+    button.classList.remove('busy');
+  }
 }
 
 function movesList(box, plan, empty) {
@@ -237,9 +266,10 @@ async function applySort() {
 
 async function previewRename() {
   const prefix = $('prefix').value.trim();
-  $('prefix-example').textContent = /\{(N|DATE|NAME)/.test(prefix)
-    ? '{N} numbers the files 1, 2, 3… in alphabetical order of their current names. {DATE} keeps the date in the name, ' +
-      'or uses the date the file was saved.'
+  $('prefix-example').textContent = /\{(N|DATE|NAME|T\})/.test(prefix)
+    ? '{N} numbers the files 1, 2, 3… in alphabetical order of their current names; a teaser shares its clip’s number. ' +
+      '{T} adds a T to teasers only (a teaser of a clip, or anything under 50 seconds): "SFW {N}{T}" gives SFW 12 and SFW 12T. ' +
+      '{DATE} keeps the date in the name, or uses the date the file was saved.'
     : `Just a name numbers files oldest first: "${prefix || 'SFW'} 1", "${prefix || 'SFW'} 2"… Files already named that way keep their number.`;
   const box = $('rename-preview');
   if (!prefix) {
@@ -281,7 +311,12 @@ function loadBatch() {
 }
 
 async function previewBatch() {
-  const result = await api('/api/batch/preview', {folder: state.folder, count: +$('count').value || 1,
+  const rules = $('order').value === 'rules';
+  for (const id of ['recent', 'window', 'reshuffle']) $(id).disabled = !rules && !(id === 'reshuffle' && $('order').value === 'random');
+  $('rules').textContent = rules
+    ? 'Never-posted clips first, then the longest-rested, picked with a little variety, never anything recent.'
+    : `The first ${+$('count').value || 1} clips in ${$('order').selectedOptions[0].textContent.toLowerCase()} order. Teasers go along with their clips.`;
+  const result = await api('/api/batch/preview', {folder: state.folder, count: +$('count').value || 1, order: $('order').value,
     recent_days: +$('recent').value || 0, window: +$('window').value || 1, seed: state.seed});
   state.chosen = result.chosen;
   renderBatch(result.total);
@@ -298,9 +333,9 @@ function renderBatch(total) {
   const want = +$('count').value || 0;
   $('batch-summary').textContent = state.chosen.length < want && total !== undefined
     ? `Only ${state.chosen.length} of ${want} available: the rest were used too recently.`
-    : `${state.chosen.length} clips will be copied into a new folder.`;
+    : `${state.chosen.length} clips (and their teasers) will be ${$('transfer').value === 'move' ? 'moved' : 'copied'} into the folder.`;
   $('create-batch').disabled = !state.chosen.length;
-  $('create-batch').textContent = `Create batch of ${state.chosen.length}`;
+  $('create-batch').textContent = `${$('transfer').value === 'move' ? 'Move' : 'Copy'} ${state.chosen.length} clips`;
 }
 
 async function createBatch() {
@@ -309,9 +344,10 @@ async function createBatch() {
   const button = $('create-batch');
   button.classList.add('busy');
   try {
+    const move = $('transfer').value === 'move';
     const result = await api('/api/batch', {folder: state.folder, names: state.chosen.map(c => c.name), presets,
-      platforms, name: $('batch-name').value.trim()});
-    toast(`Copied ${result.copied} clips into "${result.name}"` + (platforms.length ? `, ${result.planned} posts planned for Post Helper.` : '.') +
+      platforms, name: $('batch-name').value.trim(), move});
+    toast(`${move ? 'Moved' : 'Copied'} ${result.copied} clips into "${result.name}"` + (platforms.length ? `, ${result.planned} posts planned for Post Helper.` : '.') +
       (result.skipped.length ? ` ${result.skipped.length} skipped by site rules.` : ''));
     await api('/api/open', {path: result.path});
     $('batch-name').value = '';
@@ -321,6 +357,69 @@ async function createBatch() {
   } finally {
     button.classList.remove('busy');
   }
+}
+
+/* Manual uploads */
+const MANUAL_SITES = [...PLATFORMS, 'Instagram', 'TikTok', 'Reddit'];
+const manual = {items: [], month: '', show: '', picked: new Set()};
+const manualSite = () => $('manual-site').value;
+
+async function loadManual() {
+  if (!$('manual-site').options.length) {
+    $('manual-site').replaceChildren(...MANUAL_SITES.map(p => el('option', {}, p)));
+    $('manual-site').value = localStorage.getItem('manual-site') || 'Instagram';
+  }
+  const data = await api(`/api/rotation?folder=${encodeURIComponent(state.folder)}&platform=${encodeURIComponent(manualSite())}`);
+  Object.assign(manual, data);
+  manual.picked = new Set([...manual.picked].filter(id => manual.items.some(i => i.id === id && !i.uploaded)));
+  renderManual();
+}
+
+function renderManual() {
+  const done = manual.items.filter(i => i.uploaded).length;
+  $('manual-summary').textContent = `${manual.month} · ${done} of ${manual.items.length} uploaded`;
+  const rows = manual.items.filter(i => !manual.show || (manual.show === 'uploaded') === !!i.uploaded);
+  $('manual-list').replaceChildren(...rows.map(i => {
+    const name = i.name.split('/').pop();
+    const month = i.uploaded && new Date(i.uploaded.replace(' ', 'T')).toLocaleDateString('en-US', {month: 'long', year: 'numeric'});
+    return el('li', {class: i.uploaded ? 'done' : ''},
+      i.uploaded ? el('span') : el('input', {type: 'checkbox', 'aria-label': `Select ${name}`, checked: manual.picked.has(i.id),
+        onchange: e => { e.target.checked ? manual.picked.add(i.id) : manual.picked.delete(i.id); manualFooter(); }}),
+      thumb(i.fp),
+      el('div', {}, el('div', {class: 'clip-name'}, name),
+        i.uploaded ? el('div', {class: 'tags'}, el('span', {class: 'tag'}, manualSite()), el('span', {class: 'tag'}, month))
+          : el('div', {class: 'muted small'}, i.missing ? 'File missing' : 'Queued')),
+      el('button', {class: 'ghost small', onclick: run(() => api('/api/reveal', {fp: i.fp}))}, 'Show file'),
+      i.uploaded
+        ? el('button', {class: 'ghost small', onclick: run(async () => { await api('/api/rotation/undo', {id: i.id}); await loadManual(); })}, 'Undo')
+        : el('button', {class: 'ghost small', onclick: run(() => markUploaded([i.id]))}, 'Uploaded'));
+  }));
+  $('manual-empty').hidden = manual.items.length > 0;
+  manualFooter();
+}
+
+function manualFooter() {
+  const queued = manual.items.filter(i => !i.uploaded);
+  $('manual-all').checked = queued.length > 0 && queued.every(i => manual.picked.has(i.id));
+  $('manual-all').disabled = !queued.length;
+  $('manual-mark').disabled = !manual.picked.size;
+  $('manual-mark').textContent = manual.picked.size ? `Mark ${manual.picked.size} uploaded` : 'Mark uploaded';
+}
+
+async function markUploaded(ids) {
+  await api('/api/rotation/uploaded', {ids});
+  ids.forEach(id => manual.picked.delete(id));
+  toast(`${ids.length === 1 ? 'Logged' : `Logged ${ids.length} clips`} as uploaded to ${manualSite()}.`);
+  await loadManual();
+}
+
+async function refreshRotation() {
+  const queued = manual.items.filter(i => !i.uploaded).length;
+  if (!confirm(`Replace the ${queued} clip${queued === 1 ? '' : 's'} not uploaded yet with 30 new random ones for ${manualSite()}? ` +
+               'Uploaded clips stay logged.')) return;
+  await api('/api/rotation/refresh', {folder: state.folder, platform: manualSite()});
+  manual.picked.clear();
+  await loadManual();
 }
 
 /* Activity */
@@ -597,7 +696,22 @@ $('autosort').onchange = run(async () => {
 });
 for (const id of ['count', 'recent', 'window']) $(id).oninput = () => { clearTimeout(batchTimer); batchTimer = setTimeout(run(previewBatch), 250); };
 $('reshuffle').onclick = run(() => { state.seed += 1; return previewBatch(); });
+$('order').onchange = run(previewBatch);
+$('transfer').onchange = () => renderBatch();
+$('apply-cleanup').onclick = run(applyCleanup);
 $('create-batch').onclick = run(createBatch);
+$('manual-site').onchange = run(() => { localStorage.setItem('manual-site', manualSite()); manual.picked.clear(); return loadManual(); });
+for (const b of document.querySelectorAll('#manual-filter button')) b.onclick = () => {
+  manual.show = b.dataset.show;
+  for (const o of document.querySelectorAll('#manual-filter button')) o.setAttribute('aria-checked', String(o === b));
+  renderManual();
+};
+$('manual-all').onchange = () => {
+  manual.picked = new Set($('manual-all').checked ? manual.items.filter(i => !i.uploaded).map(i => i.id) : []);
+  renderManual();
+};
+$('manual-mark').onclick = run(() => markUploaded([...manual.picked]));
+$('manual-refresh').onclick = run(refreshRotation);
 $('chart').addEventListener('mousemove', e => {
   const tip = $('tooltip');
   const text = e.target.dataset?.tip;

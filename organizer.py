@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import library
 
-VERSION = '1.0.3'
+VERSION = '1.1.0'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
 ASSET = 'DuckysClipOrganizer.exe'
@@ -127,9 +128,13 @@ class App:
             counts.setdefault(row['fp'], {})[row['platform']] = {'count': row['n'], 'last': row['last']}
         recent = datetime.now() - timedelta(days=14)
         rows = []
-        for c in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0 ORDER BY mtime, name', (folder,)):
+        teasers = {r['parent']: r['name'] for r in self.db.execute(
+            'SELECT parent, name FROM clips WHERE folder=? AND missing=0 AND parent IS NOT NULL', (folder,))}
+        for c in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0 AND parent IS NULL ORDER BY mtime, name',
+                                 (folder,)):
             last = used.get(c['fp'])
             rows.append(dict(fp=c['fp'], name=c['name'], size=c['size'], posts=counts.get(c['fp'], {}),
+                             teaser=teasers.get(c['fp']),
                              last=last.strftime(library.FMT) if last else None,
                              status='fresh' if not last else 'recent' if last > recent else 'rested'))
         return rows
@@ -209,11 +214,11 @@ class App:
 
     def preview(self, body):
         folder = body['folder']
-        clips = [dict(r) for r in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0 ORDER BY mtime, name',
-                                                  (folder,))]
+        clips = [dict(r) for r in self.db.execute(
+            'SELECT * FROM clips WHERE folder=? AND missing=0 AND parent IS NULL ORDER BY mtime, name', (folder,))]
         rng = random.Random(body.get('seed'))
-        chosen = library.pick(clips, library.last_used(self.db), int(body['count']), datetime.now(),
-                              int(body.get('recent_days', 14)), int(body.get('window', 5)), rng)
+        chosen = library.choose(clips, library.last_used(self.db), int(body['count']), datetime.now(),
+                                body.get('order', 'rules'), int(body.get('recent_days', 14)), int(body.get('window', 5)), rng)
         return clips, chosen
 
     def post(self, path, body, server):
@@ -235,19 +240,25 @@ class App:
             pattern = body['prefix']
             # "SFW" numbers files oldest first; a pattern with {N} numbers them 1, 2, 3... alphabetically.
             skip = library.batch_dirs(self.db, folder)
-            plan, notes = library.template_plan(folder, pattern, skip) if library.TOKEN.search(pattern) \
+            plan, notes = library.template_plan(folder, pattern, skip, self.length) if library.TOKEN.search(pattern) \
                 else (library.rename_plan(folder, pattern, skip), [])
             if body.get('apply'):
                 library.apply_renames(self.db, folder, plan)
                 self.db.execute('UPDATE folders SET prefix=? WHERE path=?', (pattern.strip(), folder))
                 self.db.commit()
             return dict(plan=plan, notes=notes, applied=bool(body.get('apply')))
+        if path == '/api/cleanup':
+            folder = self.known(body['folder'])
+            plan = library.cleanup_plan(folder, library.batch_dirs(self.db, folder), self.length)
+            if body.get('apply'):
+                library.apply_renames(self.db, folder, plan)
+            return dict(plan=plan, applied=bool(body.get('apply')))
         if path == '/api/sort':
             folder = self.known(body['folder'])
             if 'autosort' in body:
                 self.db.execute('UPDATE folders SET autosort=? WHERE path=?', (int(bool(body['autosort'])), folder))
                 self.db.commit()
-            plan = library.sort_plan(folder, library.batch_dirs(self.db, folder))
+            plan = library.sort_plan(folder, library.batch_dirs(self.db, folder, moved=True))
             if body.get('apply'):
                 library.apply_renames(self.db, folder, plan)
             return dict(plan=plan, applied=bool(body.get('apply')))
@@ -260,12 +271,30 @@ class App:
             names = set(body['names'])
             clips = [dict(r) for r in self.db.execute('SELECT * FROM clips WHERE folder=? AND missing=0', (folder,))]
             chosen = [(c, '') for c in clips if c['name'] in names]
-            batch, target = library.make_batch(self.db, folder, chosen, datetime.now(), body.get('name') or None)
+            name = (body.get('name') or '').strip() or None
+            if name and (re.search(r'[<>:"/\\|?*]', name) or name.strip('.') == ''):
+                raise ValueError('Use a folder name without < > : " / \\ | ? *')
+            batch, target = library.make_batch(self.db, folder, chosen, datetime.now(), name, bool(body.get('move')))
             choice = body.get('presets') or {}  # site -> preset id; a site's first preset otherwise
             platforms = {p: choice.get(p) for p in body.get('platforms', []) if p in HELPER_SITES}
             items, skipped = library.helper_batch(self.db, batch, target, platforms, datetime.now(), self.probe) \
                 if platforms else ([], [])
             return dict(path=str(target), name=target.name, copied=len(chosen), planned=len(items), skipped=skipped)
+        if path == '/api/rotation/refresh':
+            library.refresh_rotation(self.db, self.known(body['folder']), self.site(body['platform']), datetime.now())
+            return dict(ok=True)
+        if path == '/api/rotation/uploaded':
+            library.mark_uploaded(self.db, body['ids'], datetime.now())
+            return dict(ok=True)
+        if path == '/api/rotation/undo':
+            library.unmark_uploaded(self.db, int(body['id']))
+            return dict(ok=True)
+        if path == '/api/reveal':
+            target = self.file_path(body['fp'])  # only files the library knows
+            if not target:
+                raise ValueError('That file is no longer on disk.')
+            subprocess.Popen(['explorer', '/select,', str(target)])
+            return dict(ok=True)
         if path == '/api/posted':
             self.helper_seen = datetime.now() if body.get('source') == 'post-helper' else self.helper_seen
             ok = library.record_post(self.db, body['platform'], name=body.get('name'), fp=body.get('fp'),
@@ -338,12 +367,27 @@ class App:
         except (OSError, ValueError, subprocess.SubprocessError):
             self.ffmpeg = 'error'
 
+    def length(self, path):
+        """Seconds of video, 0 if unknown (no FFmpeg): the backup check for teasers named like their clip."""
+        return (self.probe(str(path)) or {}).get('duration') or 0
+
     def known(self, folder):
         if not self.db.execute('SELECT 1 FROM folders WHERE path=?', (folder,)).fetchone():
             raise ValueError('Add that folder to the library first.')
         return folder
 
+    def site(self, platform):
+        from scheduler import DEFAULTS
+        if platform not in DEFAULTS:
+            raise ValueError('Pick a site.')
+        return platform
+
     def get(self, path, query):
+        if path == '/api/rotation':
+            now = datetime.now()
+            items = library.rotation(self.db, self.known(query.get('folder', [''])[0]),
+                                     self.site(query.get('platform', [''])[0]), now)
+            return dict(month=now.strftime('%B %Y'), items=items)
         if path == '/api/state':
             return self.state()
         if path == '/api/clips':
