@@ -18,7 +18,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Build failed; nothing was released.' }
 # The release's tag marks the commit it was built from; that commit must already be pushed to GitHub.
 $commit = git rev-parse HEAD
 if (-not (git branch -r --contains $commit)) { throw 'Push this commit to GitHub first (git push origin <branch>).' }
-gh release create $tag 'dist/DuckysClipOrganizer.exe' -R CerealAmba10/resolve-audio-sections --target $commit `
+gh release create $tag 'dist/DuckysClipOrganizer.exe' -R CerealAmba10/resolve-audio-sections --target $commit --latest=false `
     --title "Ducky's Clip Organizer $version" --notes $Notes
 if ($LASTEXITCODE -ne 0) { throw 'Creating the GitHub release failed.' }
 Write-Host "Released $tag. Copies older than $version will offer it under Check for updates."
