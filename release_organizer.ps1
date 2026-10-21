@@ -8,8 +8,11 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $version = (Select-String -Path organizer.py -Pattern "^VERSION = '([\d.]+)'").Matches[0].Groups[1].Value
 $tag = "organizer-v$version"
-gh release view $tag -R CerealAmba10/resolve-audio-sections *> $null
-if ($LASTEXITCODE -eq 0) { throw "$tag is already released. Raise VERSION in organizer.py first." }
+$ErrorActionPreference = 'Continue'  # "release not found" is the expected answer here, not an error
+gh release view $tag -R CerealAmba10/resolve-audio-sections 2>&1 | Out-Null
+$exists = $LASTEXITCODE -eq 0
+$ErrorActionPreference = 'Stop'
+if ($exists) { throw "$tag is already released. Raise VERSION in organizer.py first." }
 powershell -NoProfile -ExecutionPolicy Bypass -File build_organizer.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Build failed; nothing was released.' }
 # The release's tag marks the commit it was built from; that commit must already be pushed to GitHub.
