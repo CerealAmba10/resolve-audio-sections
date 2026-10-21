@@ -147,11 +147,12 @@ def name_date(stem):
 
 
 def name_number(stem):
-    """A clip's sequence number: the last number in its name once any date is taken out."""
+    """A clip's sequence number: the last number in its name once any date is taken out. Numbers longer than
+    6 digits are IDs or timestamps (e.g. "IRL 1422922786464071841" from a download), not clip numbers."""
     _, span = name_date(stem)
     if span:
         stem = stem[:span[0]] + ' ' + stem[span[1]:]
-    numbers = re.findall(r'\d+', stem)
+    numbers = [n for n in re.findall(r'\d+', stem) if len(n) <= 6]
     return int(numbers[-1]) if numbers else None
 
 

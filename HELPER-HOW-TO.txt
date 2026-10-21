@@ -11,6 +11,7 @@ Ducky’s Clip Organizer
        SFW                -> SFW 1, SFW 2... numbered oldest first
        SFW {N} {DATE}     -> keeps each file's own number and date: "take 7 2026-10-05" becomes "SFW 7 10-05-26"
        {N:3} pads the number (007). {DATE} is MM-DD-YY from the name, or the file's saved date if the name has none.
+       Long numbers (7+ digits, like download IDs) are not treated as clip numbers; those files get the next free one.
        {NAME} is the current name. The preview shows every change, and any number used twice, before you apply it.
      Posting history follows each clip through renames.
      Sort moves clips into a folder per year with a folder per month inside (2025 / 10 October), using the

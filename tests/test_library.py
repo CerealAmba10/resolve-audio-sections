@@ -79,7 +79,9 @@ class FolderTests(unittest.TestCase):
     def test_name_dates_and_numbers(self):
         cases = {'clip 2026-10-05 take 7': (datetime(2026, 10, 5), 7), 'IMG_20261005_0012': (datetime(2026, 10, 5), 12),
                  'stream 10-05-26 part3': (datetime(2026, 10, 5), 3), '25.12.2025 night 4': (datetime(2025, 12, 25), 4),
-                 'SFW 12': (None, 12), 'no numbers': (None, None)}
+                 'SFW 12': (None, 12), 'no numbers': (None, None),
+                 'IRL 1422922786464071841': (None, None),  # a download ID, not a clip number
+                 'take 3 1422922786464071841': (None, 3)}
         for stem, (date, number) in cases.items():
             self.assertEqual((library.name_date(stem)[0], library.name_number(stem)), (date, number), stem)
 
@@ -101,6 +103,16 @@ class FolderTests(unittest.TestCase):
         self.assertEqual(library.template_plan(self.folder, 'SFW {N:3} {DATE}')[0], [])  # running it again changes nothing
         with self.assertRaises(ValueError):
             library.template_plan(self.folder, 'Only {DATE}')  # every name would clash
+
+    def test_pattern_rename_ignores_download_ids(self):
+        for name in list(self.folder.iterdir()):
+            name.unlink()
+        for i, name in enumerate(['IRL 1422922786464071841.mp4', 'IRL 5.mp4', 'clip_1422922786464071999.mp4']):
+            (self.folder / name).write_bytes(name.encode())
+            os.utime(self.folder / name, (1000 + i, 1000 + i))
+        plan, _ = library.template_plan(self.folder, 'IRL {N}')
+        self.assertEqual(dict(plan), {'IRL 1422922786464071841.mp4': 'IRL 6.mp4',  # next free, not the ID
+                                      'clip_1422922786464071999.mp4': 'IRL 7.mp4'})
 
     def test_sort_into_year_and_month_folders(self):
         for name in list(self.folder.iterdir()):
