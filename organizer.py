@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import library
 
-VERSION = '1.0.2'
+VERSION = '1.0.3'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
 ASSET = 'DuckysClipOrganizer.exe'
@@ -99,7 +99,9 @@ def install_update(release, server):
         time.sleep(0.5)
         server.shutdown()
         server.server_close()
-        subprocess.Popen([str(exe)], creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
+        # A fresh start: without this the new exe reuses this copy's unpacked files, which are deleted as it exits.
+        subprocess.Popen([str(exe)], env={**os.environ, 'PYINSTALLER_RESET_ENVIRONMENT': '1'},
+                         creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
         os._exit(0)
     threading.Thread(target=restart, daemon=True).start()
 
