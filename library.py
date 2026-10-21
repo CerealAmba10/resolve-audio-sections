@@ -146,19 +146,14 @@ def name_date(stem):
     return None, None
 
 
-def name_number(stem):
-    """A clip's sequence number: the last number in its name once any date is taken out. Numbers longer than
-    6 digits are IDs or timestamps (e.g. "IRL 1422922786464071841" from a download), not clip numbers."""
-    _, span = name_date(stem)
-    if span:
-        stem = stem[:span[0]] + ' ' + stem[span[1]:]
-    numbers = [n for n in re.findall(r'\d+', stem) if len(n) <= 6]
-    return int(numbers[-1]) if numbers else None
+def natural(path):
+    """Sort key matching File Explorer: "clip 2" before "clip 10", case ignored."""
+    return [int(part) if part.isdigit() else part for part in re.split(r'(\d+)', str(path).lower())]
 
 
 def template_plan(folder, template, skip=()):
     """Bulk rename from a pattern such as "SFW {N} {DATE}".
-    {N}: the number already in the file's name (a free number if it has none or it's taken); {N:3} pads to 3 digits.
+    {N}: 1, 2, 3... in alphabetical order of the current names (folder by folder); {N:3} pads to 3 digits.
     {DATE}: the date in the file's name as MM-DD-YY (the file's modified date if the name has none).
     {NAME}: the current name. Returns ([(old, new)], notes)."""
     template = template.strip()
@@ -166,20 +161,9 @@ def template_plan(folder, template, skip=()):
         raise ValueError('Use a name without < > : " / \\ | ? *')
     if not re.search(r'\{N(:\d+)?\}|\{NAME\}', template):
         raise ValueError('Add {N} or {NAME} so every file ends up with a different name.')
-    files = media_files(folder, skip)
-    numbers = {p: name_number(p.stem) for p in files}
-    highest = max((n for n in numbers.values() if n is not None), default=0)
-    assigned, taken, notes = {}, set(), []
-    for path in files:  # oldest first, so the older file keeps a shared number
-        n = numbers[path]
-        if n is None or n in taken:
-            highest += 1
-            if n is not None:
-                notes.append(f'{path.name}: number {n} is already used, so it becomes {highest}.')
-            n = highest
-        taken.add(n)
-        assigned[path] = n
-    plan, finals = [], {}
+    files = sorted(media_files(folder, skip), key=lambda p: natural(rel(folder, p)))
+    assigned = {path: n for n, path in enumerate(files, 1)}
+    plan, finals, notes = [], {}, []
     for path in files:
         date = name_date(path.stem)[0] or datetime.fromtimestamp(path.stat().st_mtime)
 

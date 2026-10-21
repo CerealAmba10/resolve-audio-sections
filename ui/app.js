@@ -238,7 +238,7 @@ async function applySort() {
 async function previewRename() {
   const prefix = $('prefix').value.trim();
   $('prefix-example').textContent = /\{(N|DATE|NAME)/.test(prefix)
-    ? '{N} keeps the number already in each name (free numbers for files without one). {DATE} keeps the date in the name, ' +
+    ? '{N} numbers the files 1, 2, 3… in alphabetical order of their current names. {DATE} keeps the date in the name, ' +
       'or uses the date the file was saved.'
     : `Just a name numbers files oldest first: "${prefix || 'SFW'} 1", "${prefix || 'SFW'} 2"… Files already named that way keep their number.`;
   const box = $('rename-preview');

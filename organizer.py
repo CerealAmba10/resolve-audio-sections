@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import library
 
-VERSION = '1.0.1'
+VERSION = '1.0.2'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
 ASSET = 'DuckysClipOrganizer.exe'
@@ -231,7 +231,7 @@ class App:
         if path == '/api/rename':
             folder = self.known(body['folder'])
             pattern = body['prefix']
-            # "SFW" numbers files oldest first; a pattern with {N}, {DATE} or {NAME} keeps each file's own number/date.
+            # "SFW" numbers files oldest first; a pattern with {N} numbers them 1, 2, 3... alphabetically.
             skip = library.batch_dirs(self.db, folder)
             plan, notes = library.template_plan(folder, pattern, skip) if library.TOKEN.search(pattern) \
                 else (library.rename_plan(folder, pattern, skip), [])
