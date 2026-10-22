@@ -248,6 +248,14 @@ class FolderTests(unittest.TestCase):
         self.assertNotEqual({p['fp'] for p in library.rotation(self.db, folder, 'Instagram', NOW + timedelta(days=31))},
                             set())  # next month: a new pool
         self.assertEqual(len(library.rotation(self.db, folder, 'TikTok', NOW)), 30)  # each site has its own
+        self.db.execute("UPDATE rotation SET fp='gone' WHERE platform='Reddit'")
+        library.rotation(self.db, folder, 'Reddit', NOW)
+        self.db.execute("UPDATE rotation SET fp='gone' WHERE platform='Reddit'")  # clips no longer in the library
+        self.assertEqual(len(library.rotation(self.db, folder, 'Reddit', NOW)), 30)  # a blank pool is picked again
+        (self.folder / 'still.png').write_bytes(b'image')
+        library.scan(self.db, self.folder)
+        library.refresh_rotation(self.db, folder, 'Reddit', NOW, size=100, force=True)  # force takes any file
+        self.assertIn('still.png', [p['name'] for p in library.rotation(self.db, folder, 'Reddit', NOW)])
         other = Path(self.temp.name, 'other')
         other.mkdir()
         (other / 'o.mp4').write_bytes(b'other folder')

@@ -369,6 +369,7 @@ async function loadManual() {
     $('manual-site').replaceChildren(...MANUAL_SITES.map(p => el('option', {}, p)));
     $('manual-site').value = localStorage.getItem('manual-site') || 'Instagram';
   }
+  $('manual-summary').textContent = 'Loading…';
   const data = await api(`/api/rotation?folder=${encodeURIComponent(state.folder)}&platform=${encodeURIComponent(manualSite())}`);
   Object.assign(manual, data);
   manual.picked = new Set([...manual.picked].filter(id => manual.items.some(i => i.id === id && !i.uploaded)));
@@ -419,12 +420,12 @@ async function markUploaded(ids) {
   await loadManual();
 }
 
-async function refreshRotation() {
+async function refreshRotation(force = false) {
   const queued = manual.items.filter(i => !i.uploaded).length;
   const from = state.folders.find(f => f.path === state.folder)?.name || 'this folder';
-  if (!confirm(`Replace the ${queued} clip${queued === 1 ? '' : 's'} not uploaded yet with 30 new random ones from ${from} for ${manualSite()}? ` +
+  if (queued && !confirm(`Replace the ${queued} clip${queued === 1 ? '' : 's'} not uploaded yet with 30 new random ones from ${from} for ${manualSite()}? ` +
                'Uploaded clips stay logged.')) return;
-  await api('/api/rotation/refresh', {folder: state.folder, platform: manualSite()});
+  await api('/api/rotation/refresh', {folder: state.folder, platform: manualSite(), force});
   manual.picked.clear();
   await loadManual();
 }
@@ -718,7 +719,8 @@ $('manual-all').onchange = () => {
   renderManual();
 };
 $('manual-mark').onclick = run(() => markUploaded([...manual.picked]));
-$('manual-refresh').onclick = run(refreshRotation);
+$('manual-refresh').onclick = run(() => refreshRotation());
+$('manual-force').onclick = run(() => refreshRotation(true));
 $('manual-folder').onclick = run(async () => {
   toast('Copying this month’s videos…');
   await api('/api/rotation/folder', {platform: manualSite()});

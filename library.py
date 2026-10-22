@@ -130,7 +130,8 @@ def pairs(files, length=None):
     With length (path -> seconds), a same-name video under 50 seconds is taken as the teaser of a longer one,
     and nothing 50 seconds or longer is ever a teaser, whatever its name says."""
     seconds = lambda p: (length(p) or 0) if length and p.suffix.lower() in VIDEO else 0
-    named = lambda p: teaser_key(p.stem) if seconds(p) < TEASER_SECONDS else None
+    # Only files whose name or a same-name sibling makes them a possible teaser are probed: probing is slow.
+    named = lambda p: k if (k := teaser_key(p.stem)) is not None and seconds(p) < TEASER_SECONDS else None
     clips = {}
     for path in files:
         if named(path) is None:
@@ -141,6 +142,8 @@ def pairs(files, length=None):
     for (parent, k), group in clips.items() if length else ():
         same.setdefault((parent, re.sub(r' \(\d+\)$', '', k)), []).extend(group)
     for group in same.values():
+        if len(group) < 2:
+            continue
         short = [p for p in group if 0 < seconds(p) < TEASER_SECONDS]
         full = [p for p in group if p not in short]
         for teaser in short if full else ():
@@ -463,19 +466,21 @@ def record_post(db, platform, name=None, fp=None, at=None, source='manual'):
 VIDEO = {'.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi'}
 
 
-def fill_rotation(db, folder, platform, month, size, rng=random):
+def fill_rotation(db, folder, platform, month, size, rng=random, force=False):
     """Add `size` random videos from `folder` to a site's month pool: ones never posted on this site first,
-    nothing already in it."""
+    nothing already in it. With force, any file in the folder can be picked (videos still first)."""
     taken = {r['fp'] for r in db.execute('SELECT fp FROM rotation WHERE platform=? AND month=?', (platform, month))}
     posted = {r['fp'] for r in db.execute('SELECT fp FROM posts WHERE platform=?', (platform,))}
-    clips = [r['fp'] for r in db.execute('SELECT fp, name FROM clips WHERE folder=? AND missing=0 AND parent IS NULL '
-                                         'ORDER BY name', (folder,))
-             if Path(r['name']).suffix.lower() in VIDEO and r['fp'] not in taken]
-    fresh, rest = [fp for fp in clips if fp not in posted], [fp for fp in clips if fp in posted]
-    rng.shuffle(fresh)
-    rng.shuffle(rest)
+    rows = [r for r in db.execute('SELECT fp, name, parent FROM clips WHERE folder=? AND missing=0 ORDER BY name', (folder,))
+            if r['fp'] not in taken]
+    video = lambda r: Path(r['name']).suffix.lower() in VIDEO and r['parent'] is None
+    groups = [[r['fp'] for r in rows if video(r) and r['fp'] not in posted], [r['fp'] for r in rows if video(r) and r['fp'] in posted]]
+    if force:
+        groups.append([r['fp'] for r in rows if not video(r)])
+    for group in groups:
+        rng.shuffle(group)
     db.executemany('INSERT INTO rotation(folder, platform, month, fp) VALUES(?, ?, ?, ?)',
-                   [(folder, platform, month, fp) for fp in (fresh + rest)[:size]])
+                   [(folder, platform, month, fp) for fp in sum(groups, [])[:size]])
     db.commit()
 
 
@@ -483,18 +488,21 @@ def rotation(db, folder, platform, now, size=30, rng=random):
     """This month's pool for a site. One pool per site and month, whichever folder is open: the first time it's
     opened in a new month, it's picked from `folder`."""
     month = now.strftime('%Y-%m')
-    if not db.execute('SELECT 1 FROM rotation WHERE platform=? AND month=?', (platform, month)).fetchone():
-        fill_rotation(db, folder, platform, month, size, rng)
-    return [dict(r) for r in db.execute("""SELECT r.id, r.fp, r.folder, c.name, c.missing, p.at uploaded FROM rotation r
-        JOIN clips c ON c.fp=r.fp LEFT JOIN posts p ON p.id=r.post
+    pool = lambda: [dict(r) for r in db.execute("""SELECT r.id, r.fp, r.folder, c.name, c.missing, p.at uploaded
+        FROM rotation r JOIN clips c ON c.fp=r.fp LEFT JOIN posts p ON p.id=r.post
         WHERE r.platform=? AND r.month=? ORDER BY r.id""", (platform, month))]
+    items = pool()
+    if not items:  # new month, or a pool whose clips are gone from the library: pick again
+        refresh_rotation(db, folder, platform, now, size, rng)
+        items = pool()
+    return items
 
 
-def refresh_rotation(db, folder, platform, now, size=30, rng=random):
+def refresh_rotation(db, folder, platform, now, size=30, rng=random, force=False):
     """Drop everything not uploaded yet from this month's pool and pick `size` new videos from `folder`."""
     month = now.strftime('%Y-%m')
     db.execute('DELETE FROM rotation WHERE platform=? AND month=? AND post IS NULL', (platform, month))
-    fill_rotation(db, folder, platform, month, size, rng)
+    fill_rotation(db, folder, platform, month, size, rng, force)
 
 
 def mark_uploaded(db, ids, now):

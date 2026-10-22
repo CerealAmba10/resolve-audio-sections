@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import library
 
-VERSION = '1.1.1'
+VERSION = '1.1.2'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
 ASSET = 'DuckysClipOrganizer.exe'
@@ -282,7 +282,7 @@ class App:
             return dict(path=str(target), name=target.name, copied=len(chosen), planned=len(items), skipped=skipped)
         if path == '/api/rotation/refresh':
             folder, platform, now = self.known(body['folder']), self.site(body['platform']), datetime.now()
-            library.refresh_rotation(self.db, folder, platform, now)
+            library.refresh_rotation(self.db, folder, platform, now, force=bool(body.get('force')))
             library.rotation_folder(self.db, platform, now, create=False)  # keep the month's folder in step
             return dict(ok=True)
         if path == '/api/rotation/folder':
