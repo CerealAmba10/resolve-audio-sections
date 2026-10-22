@@ -14,6 +14,7 @@ silences in the tracks you choose. Offline, for **Windows, Resolve Free 21.1.1**
 6 hours. When a newer version is out, a small window offers **Update**. Click it; the new
 version is downloaded, checked against the SHA-256 GitHub publishes, and installed in a few
 seconds. Close the window to update later. Updates are never offered while a clip job is running.
+To check right away, click **Check for updates** at the bottom of the Audio Sections window.
 
 No Python installation or account is needed. Setup reuses an existing FFmpeg and
 FFprobe pair from PATH/common install folders. If none is available, it downloads

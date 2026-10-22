@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9
+
+- Check for updates button in the Audio Sections window, next to the installed version. Updating from
+  there closes the window and restarts the helper; anything already in Resolve stays.
+
 ## 1.8
 
 - Still images on video tracks no longer collapse to one frame on the cuts timeline: each is turned

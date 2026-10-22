@@ -7,6 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import detection as d
+from updater import VERSION
 from media import STILL_TYPES, Cancelled, still_video, track_envelope
 
 ROLES = ('Primary', 'Background')
@@ -36,7 +37,7 @@ def clock(seconds):
 
 class Editor:
     def __init__(self, master, request, settings, on_render, on_cancel, send=None, pieces=None, defaults=None,
-                 home=None):
+                 home=None, check_updates=None):
         self.request, self.settings = request, settings
         self.on_render, self.on_cancel = on_render, on_cancel
         timeline = request['timeline']
@@ -61,6 +62,7 @@ class Editor:
         self.loaded = [dict(p) for p in pieces] if pieces else None
         self.cuts_name = request['timeline']['name'] if pieces else None
         self.target = None
+        self.check_updates = check_updates
         self.home = Path(home) if home else Path.home() / 'Documents/Audio Sections Plugin'
         self.view = [0.0, max(self.duration, 1.0)]
         self.drag = None
@@ -146,6 +148,9 @@ class Editor:
         ttk.Label(hint, foreground=COLORS['dim'], text='Wheel: zoom · drag: scroll · drag clip edges to trim · '
                   'drag the orange line to set a track\'s silence level · click a clip to select').pack(side='left')
         ttk.Button(hint, text='Show all', command=self.fit).pack(side='right')
+        if self.check_updates:
+            ttk.Button(hint, text='Check for updates', command=self.check_updates).pack(side='right', padx=(0, 8))
+        ttk.Label(hint, foreground=COLORS['dim'], text=f'Audio Sections {VERSION}').pack(side='right', padx=(0, 8))
 
         bottom = ttk.Frame(outer)
         bottom.grid(row=4, column=0, sticky='nsew')

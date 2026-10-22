@@ -14,7 +14,7 @@ import tkinter as tk
 from datetime import datetime
 from fractions import Fraction
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import detection as d
 from editor import Editor
@@ -180,6 +180,34 @@ class Worker:
                   'Updating takes a few seconds; close this window to update later.', 0,
                   ('Update', lambda: self.install_update(found)))
 
+    def check_now(self):
+        """The window's Check for updates button: ask GitHub straight away, off the window's thread."""
+        if self.editor:
+            self.editor.status.set('Checking for updates…')
+        def work():
+            try:
+                self.events.put(('checked', updater.latest()))
+            except Exception as error:
+                self.events.put(('checked', f'Could not reach GitHub: {error}'))
+        threading.Thread(target=work, daemon=True).start()
+
+    def answer_check(self, found):
+        editor = self.editor
+        parent = editor.win if editor else self.window
+        if editor:
+            editor.status.set('')
+        if isinstance(found, str):
+            return messagebox.showerror('Check for updates', found, parent=parent)
+        if not found:
+            return messagebox.showinfo('Check for updates', f'You have the latest version ({updater.VERSION}).', parent=parent)
+        if messagebox.askyesno('Update available', f"Audio Sections {found['version']} is available (you have "
+                               f"{updater.VERSION}).\n\nUpdate now? This closes this window and restarts the helper; "
+                               'anything already in Resolve, such as a cuts timeline, stays.', parent=parent):
+            if editor and self.stage == 'editing':
+                editor.close_quietly()
+                self.cancelled()          # lets the waiting Resolve script finish cleanly
+            self.install_update(found)
+
     def install_update(self, found):
         self.stage = 'updating'
         self.show('Updating', f"Downloading Audio Sections {found['version']}…", 0, ('Close', self.window.withdraw))
@@ -228,7 +256,8 @@ class Worker:
             # A cuts timeline made earlier opens with its pieces as the clips, and its saved name and folder.
             record = self.cuts_registry().get(request['timeline']['name'])
             self.editor = Editor(self.root, request, self.settings, self.render, self.cancelled, self.send,
-                                 pieces=record and pieces_of(request['timeline']), defaults=record, home=self.home)
+                                 pieces=record and pieces_of(request['timeline']), defaults=record, home=self.home,
+                                 check_updates=self.check_now)
         except Exception as error:
             write_state(self.home, request['id'], 'error', message=f'Could not read the timeline: {error}')
             self.done('Could not open', str(error))
@@ -341,6 +370,8 @@ class Worker:
             if kind == 'progress':
                 self.progress['value'] = value[0] * 100
                 self.message.set(value[1])
+            elif kind == 'checked':
+                self.root.after(0, self.answer_check, value)     # dialogs never hold up the loop
             elif kind == 'update':
                 if self.stage == 'idle':
                     self.offer_update(value)
