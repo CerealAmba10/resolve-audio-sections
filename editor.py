@@ -1,4 +1,5 @@
 """Choose primary/background tracks, preview the cuts and pick which clips to render."""
+import hashlib
 import queue
 import threading
 import tkinter as tk
@@ -6,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import detection as d
-from media import Cancelled, track_envelope
+from media import STILL_TYPES, Cancelled, still_video, track_envelope
 
 ROLES = ('Primary', 'Background')
 RULER, CLIP_LANE, LANE = 22, 30, 58
@@ -34,7 +35,8 @@ def clock(seconds):
 
 
 class Editor:
-    def __init__(self, master, request, settings, on_render, on_cancel, send=None, pieces=None, defaults=None):
+    def __init__(self, master, request, settings, on_render, on_cancel, send=None, pieces=None, defaults=None,
+                 home=None):
         self.request, self.settings = request, settings
         self.on_render, self.on_cancel = on_render, on_cancel
         timeline = request['timeline']
@@ -59,6 +61,7 @@ class Editor:
         self.loaded = [dict(p) for p in pieces] if pieces else None
         self.cuts_name = request['timeline']['name'] if pieces else None
         self.target = None
+        self.home = Path(home) if home else Path.home() / 'Documents/Audio Sections Plugin'
         self.view = [0.0, max(self.duration, 1.0)]
         self.drag = None
         self.events, self.cancel = queue.Queue(), threading.Event()
@@ -185,6 +188,8 @@ class Editor:
         self.cuts_button.pack(side='left', padx=(8, 0))
         self.load_button = ttk.Button(buttons, text='Load edits from Resolve', state='disabled', command=self.load_edits)
         self.load_button.pack(side='left', padx=(8, 0))
+        self.undo_button = ttk.Button(buttons, text='Undo cuts', state='disabled', command=self.undo_cuts)
+        self.undo_button.pack(side='left', padx=(8, 0))
         self.render_button = ttk.Button(buttons, text='Render', command=self.render, state='disabled')
         self.render_button.pack(side='left', padx=(8, 0))
         self.status = tk.StringVar(value='')
@@ -243,7 +248,8 @@ class Editor:
             busy = self.busy
             for button in (self.render_button, self.cuts_button):
                 button.configure(state='normal' if self.included() and not busy else 'disabled')
-            self.load_button.configure(state='normal' if self.cuts_name and not busy else 'disabled')
+            for button in (self.load_button, self.undo_button):
+                button.configure(state='normal' if self.cuts_name and not busy else 'disabled')
         self.win.after(100, self.poll)
 
     def threshold(self, track):
@@ -521,11 +527,11 @@ class Editor:
         folder.mkdir(parents=True, exist_ok=True)
         if action == 'cuts':
             self.busy = True
-            self.status.set('Making the cuts timeline in Resolve…')
-            return self.send(dict(action='cuts', teaser=teaser_frames,
-                                  clips=[dict(first=j['first'], last=j['last']) for j in jobs]),
-                             record=dict(stem=stem, output=str(folder), teaser_frames=teaser_frames,
-                                         fade=self.setting('fade'), clip_fade=self.setting('clip_fade')))
+            clips = [dict(first=j['first'], last=j['last']) for j in jobs]
+            record = dict(stem=stem, output=str(folder), teaser_frames=teaser_frames,
+                          fade=self.setting('fade'), clip_fade=self.setting('clip_fade'))
+            threading.Thread(target=self.prepare_stills, args=(clips, teaser_frames, record), daemon=True).start()
+            return
         roles = dict(self.settings.get('roles', {}))
         roles.update({t['name'] or f"A{t['index']}": t['role'].get() for t in self.tracks})
         self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get())
@@ -546,6 +552,34 @@ class Editor:
         self.loaded = self.target = None
         self.schedule()
 
+    def prepare_stills(self, clips, teaser_frames, record):
+        """Turn still images on video tracks into videos of their item's length (cached), then ask Resolve
+        to build the cuts timeline with them, so a still is not cut down to a single frame."""
+        try:
+            timeline, stills = self.request['timeline'], {}
+            width, height = int(timeline.get('width') or 1920), int(timeline.get('height') or 1080)
+            items = [(t['index'], i) for t in timeline['video'] for i in t['items']
+                     if i.get('path') and Path(i['path']).suffix.lower() in STILL_TYPES]
+            for n, (index, item) in enumerate(items, 1):
+                self.win.after(0, self.status.set, f'Preparing still image {n} of {len(items)} for the cuts timeline…')
+                frames = int(item['end'] - item['start'])
+                path = Path(item['path'])
+                stat = path.stat()
+                key = hashlib.sha1(f'{path}|{stat.st_mtime_ns}|{stat.st_size}|{frames}|{self.fps}|{width}x{height}'
+                                   .encode()).hexdigest()[:16]
+                video = still_video(path, frames, self.fps, width, height, self.home / 'stills' / f'{path.stem} {key}.mp4')
+                stills[f"video{index}:{int(item['start'])}"] = video.as_posix()
+            command = dict(action='cuts', teaser=teaser_frames, clips=clips, **({'stills': stills} if stills else {}))
+            self.win.after(0, self.status.set, 'Making the cuts timeline in Resolve…')
+            self.win.after(0, lambda: self.send(command, record=record))
+        except Exception as error:
+            self.win.after(0, self.on_result, dict(status='command_error', message=str(error)))
+
+    def undo_cuts(self):
+        self.busy = True
+        self.status.set(f'Deleting "{self.cuts_name}" from Resolve…')
+        self.send(dict(action='undo', timeline=self.cuts_name))
+
     def load_edits(self):
         self.busy = True
         self.status.set(f'Reading "{self.cuts_name}" from Resolve…')
@@ -560,6 +594,12 @@ class Editor:
             self.cuts_name = result['timeline']
             self.status.set(f'Made "{self.cuts_name}" in Resolve. Edit it there (blade to cut, delete a through edit '
                             'to merge, delete a piece to skip it), then click Load edits from Resolve.')
+        elif result['status'] == 'undone':
+            if result.get('ended'):          # the window was opened on that cuts timeline: nothing left to render
+                return self.close_quietly()
+            self.cuts_name, self.loaded, self.target = None, None, None
+            self.recompute()
+            self.status.set(f'Deleted "{result["timeline"]}" and went back to your timeline. Showing automatic cuts.')
         elif result['status'] == 'pieces':
             start = int(result['start'])
             self.loaded = d.pieces_from(result['pieces'], result.get('markers') or [], start, self.fps)

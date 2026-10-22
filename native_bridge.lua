@@ -121,7 +121,26 @@ end
 -- Rebuild the chosen clips as separate pieces on a new timeline, each track at its original position,
 -- so they can be watched, bladed, merged (delete the through edit) or deleted in Resolve before rendering.
 -- Pieces are plain media: effects and transforms on the source items are not copied.
-local function build_cuts(p, source, clips, teaser)
+-- A still image only has one source frame, so pieces cut from it collapse to one frame. The helper
+-- turns each still into a video of its item's length; import it once into an "Audio Sections stills" bin.
+local function still_media(pool, path)
+    local root, bin = pool:GetRootFolder(), nil
+    for _, folder in ipairs(root:GetSubFolderList() or {}) do
+        if folder:GetName() == 'Audio Sections stills' then bin = folder end
+    end
+    bin = bin or assert(pool:AddSubFolder(root, 'Audio Sections stills'), 'Could not create the stills bin.')
+    local wanted = path:gsub('\\', '/'):lower()
+    for _, clip in ipairs(bin:GetClipList() or {}) do
+        if tostring(clip:GetClipProperty()['File Path']):gsub('\\', '/'):lower() == wanted then return clip end
+    end
+    local previous = pool:GetCurrentFolder()
+    pool:SetCurrentFolder(bin)
+    local imported = pool:ImportMedia({path})
+    if previous then pool:SetCurrentFolder(previous) end
+    return assert(imported and imported[1], 'Could not import ' .. path)
+end
+
+local function build_cuts(p, source, clips, teaser, stills)
     local pool = p:GetMediaPool()
     local names = {}
     for i = 1, p:GetTimelineCount() do names[p:GetTimelineByIndex(i):GetName()] = true end
@@ -147,7 +166,31 @@ local function build_cuts(p, source, clips, teaser)
         end
         if first_index == 1 then assert(cuts:DeleteTrack('audio', 1), 'Could not replace the first audio track.') end
         local offset = cuts:GetStartFrame() - source:GetStartFrame()
-        local colors, placed = {'Orange', 'Teal'}, 0
+        local colors, placed, ratios = {'Orange', 'Teal'}, 0, {}
+        -- Source frames per timeline frame, measured per media item. AppendToTimeline counts in the media's
+        -- own frames, which differ from the timeline's when it has another frame rate or is audio-only, so a
+        -- piece that comes out the wrong length is measured, removed and placed again.
+        local function place(media, key, source_start, offset, length, kind, index, record)
+            for attempt = 1, 2 do
+                local ratio = ratios[key] or 1
+                local from = source_start + math.floor(offset * ratio + 0.5)
+                local span = math.max(1, math.floor(length * ratio + 0.5))
+                -- endFrame is exclusive in Resolve 21.1.1.
+                local added = pool:AppendToTimeline({{mediaPoolItem = media, startFrame = from, endFrame = from + span,
+                    mediaType = kind == 'video' and 1 or 2, trackIndex = index, recordFrame = record}})
+                local piece = assert(added and added[1], 'Could not place a piece on ' .. kind .. ' track ' .. index)
+                local actual = piece:GetEnd() - piece:GetStart()
+                if math.abs(actual - length) <= 1 then
+                    ratios[key] = ratio
+                    return piece
+                end
+                call(cuts, 'DeleteClips', {piece}, false)
+                assert(attempt == 1 and not ratios[key] and actual > 1, string.format(
+                    'A piece on %s track %d came out %d frames long instead of %d, so the cuts timeline was not made.',
+                    kind, index, actual, length))
+                ratios[key] = span / actual
+            end
+        end
         for number, clip in ipairs(clips) do
             local first, stop = source:GetStartFrame() + clip.first, source:GetStartFrame() + clip.last + 1
             local group = {}
@@ -156,13 +199,11 @@ local function build_cuts(p, source, clips, teaser)
                     for _, item in ipairs(source:GetItemListInTrack(kind, index) or {}) do
                         local a, b = math.max(first, item:GetStart()), math.min(stop, item:GetEnd())
                         local media = call(item, 'GetMediaPoolItem')
+                        local still = kind == 'video' and stills and stills[kind .. index .. ':' .. string.format('%d', item:GetStart())]
                         if b > a and media and call(item, 'GetClipEnabled') ~= false then
-                            -- endFrame is exclusive in Resolve 21.1.1.
-                            local from = item:GetSourceStartFrame() + (a - item:GetStart())
-                            local added = pool:AppendToTimeline({{mediaPoolItem = media, startFrame = from,
-                                endFrame = from + (b - a), mediaType = kind == 'video' and 1 or 2,
-                                trackIndex = index, recordFrame = a + offset}})
-                            local piece = assert(added and added[1], 'Could not place a piece on ' .. kind .. ' track ' .. index)
+                            local source_start, key = item:GetSourceStartFrame(), kind .. index .. ':' .. tostring(item:GetStart())
+                            if still then media, source_start, key = still_media(pool, still), 0, still end
+                            local piece = place(media, key, source_start, a - item:GetStart(), b - a, kind, index, a + offset)
                             call(piece, 'SetClipColor', colors[number % 2 + 1])
                             local mapping = kind == 'audio' and call(item, 'GetSourceAudioChannelMapping')
                             if mapping then call(piece, 'SetSourceAudioChannelMapping', mapping) end
@@ -248,11 +289,20 @@ local function run()
             local done, result = pcall(function()
                 if state.action == 'cuts' then
                     assert(fingerprint(timeline) == before, 'The timeline was edited after scanning. Run Audio Sections again.')
-                    local name = build_cuts(p, timeline, state.clips, state.teaser)
+                    local name = build_cuts(p, timeline, state.clips, state.teaser, state.stills)
                     return {status = 'cuts_ready', timeline = name, start = find(name):GetStartFrame(),
                         message = 'Made "' .. name .. '".'}
                 end
                 local cuts = assert(find(state.timeline), 'Timeline "' .. tostring(state.timeline) .. '" was not found.')
+                if state.action == 'undo' then
+                    -- Only ever asked for a cuts timeline Audio Sections made. Leave it before deleting it.
+                    local scanned = state.timeline == timeline:GetName()
+                    if not scanned then p:SetCurrentTimeline(timeline) end
+                    assert(p:GetMediaPool():DeleteTimelines({cuts}), 'Could not delete "' .. state.timeline .. '".')
+                    prints[state.timeline] = nil
+                    return {status = 'undone', timeline = state.timeline, ended = scanned,
+                        message = 'Deleted "' .. state.timeline .. '".'}
+                end
                 local track
                 for _, kind in ipairs({'video', 'audio'}) do
                     for index = 1, cuts:GetTrackCount(kind) do
@@ -274,6 +324,7 @@ local function run()
             if done then
                 result.seq = seq
                 announce(id, result.status, 100, result.message, result)
+                if result.ended then return end      -- the scanned timeline itself was deleted
             else
                 announce(id, 'command_error', 0, tostring(result), {seq = seq})
             end
@@ -312,6 +363,7 @@ local function run()
                 FormatWidth = tonumber(settings.timelineResolutionWidth),
                 FormatHeight = tonumber(settings.timelineResolutionHeight)}), 'Cannot apply render settings for ' .. job.name)
             jobs[#jobs + 1] = assert(p:AddRenderJob(), 'Cannot queue ' .. job.name)
+            announce(id, 'rendering', 0, 'Queued ' .. #jobs .. ' of ' .. #state.jobs .. ' clips in Resolve')
         end
     end)
     if not ok then

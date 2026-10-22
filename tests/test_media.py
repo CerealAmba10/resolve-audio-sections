@@ -40,6 +40,16 @@ class MediaTest(unittest.TestCase):
         voice = '{"track_mapping":{"1":{"channel_idx":[1,2],"mute":false,"type":"Stereo"}}}'
         self.assertEqual(self.active(voice, source=3.0, frames=120), [(2.0, 4.0)])
 
+    def test_still_becomes_video_of_exact_length(self):
+        image = self.folder / 'wide still.png'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=3000x500:d=1', '-frames:v', '1', str(image)], check=True)
+        video = media.still_video(image, 1500, Fraction(24), 320, 180, self.folder / 'stills/wide.mp4')   # 1 minute + 60 frames
+        probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames', '-show_entries',
+                                'stream=nb_read_frames,width,height', '-of', 'csv=p=0', str(video)], capture_output=True, text=True)
+        self.assertEqual(probe.stdout.strip(), '320,180,1500')
+        self.assertEqual(media.still_video(image, 1500, Fraction(24), 320, 180, video), video)   # cached
+        self.assertEqual([p.name for p in (self.folder / 'stills').iterdir()], ['wide.mp4'])  # no leftovers
+
 
 if __name__ == '__main__':
     unittest.main()

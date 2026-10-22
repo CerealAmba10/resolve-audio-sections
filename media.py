@@ -174,3 +174,47 @@ def fade_out(path, frames, fps, fade):
         temporary.unlink(missing_ok=True)
         raise ValueError(f'Could not fade out {path.name}:\n{result.stderr[-800:]}')
     temporary.replace(path)    # only replace the render once the faded copy is complete
+
+
+STILL_TYPES = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp', '.gif', '.psd', '.exr', '.dpx', '.tga', '.heic'}
+
+
+def still_video(image, frames, fps, width, height, target):
+    """A video of `frames` frames showing one still image, so a cuts timeline can hold it for its full length.
+    The image is scaled once, one minute is encoded, and copies are joined without re-encoding: a 3-hour
+    still takes seconds instead of re-scaling the image for every frame."""
+    target = Path(target)
+    if target.is_file():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    rate = f'{fps.numerator}/{fps.denominator}'
+    work = target.with_suffix('.parts')
+    work.mkdir(exist_ok=True)
+    try:
+        scaled = work / 'scaled.png'
+        fit = (f'scale={width}:{height}:force_original_aspect_ratio=decrease,'
+               f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2')
+        steps = [[tool('ffmpeg'), '-v', 'error', '-y', '-i', str(image), '-vf', fit, '-frames:v', '1', str(scaled)]]
+        minute = max(1, round(60 * fps))
+        whole, rest = divmod(int(frames), minute)
+        parts = []
+        for name, count in (('minute.mp4', minute if whole else 0), ('rest.mp4', rest)):
+            if count:
+                steps.append([tool('ffmpeg'), '-v', 'error', '-y', '-loop', '1', '-framerate', rate, '-i', str(scaled),
+                              '-frames:v', str(count), '-vf', 'format=yuv420p', '-c:v', 'libx264', '-preset', 'medium',
+                              '-tune', 'stillimage', '-crf', '18', '-g', str(minute), '-r', rate, str(work / name)])
+        parts = ['minute.mp4'] * whole + (['rest.mp4'] if rest else [])
+        (work / 'list.txt').write_text(''.join(f"file '{p}'\n" for p in parts), encoding='utf-8')
+        partial = target.with_suffix('.partial.mp4')
+        steps.append([tool('ffmpeg'), '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', str(work / 'list.txt'),
+                      '-c', 'copy', '-movflags', '+faststart', str(partial)])
+        for args in steps:
+            result = run(args, timeout=3600)
+            if result.returncode:
+                raise ValueError(f'Could not prepare the still {Path(image).name}:\n{result.stderr[-800:]}')
+        partial.replace(target)
+        return target
+    finally:
+        for leftover in work.glob('*'):
+            leftover.unlink(missing_ok=True)
+        work.rmdir()

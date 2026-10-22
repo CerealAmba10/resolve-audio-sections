@@ -228,13 +228,19 @@ class Worker:
             # A cuts timeline made earlier opens with its pieces as the clips, and its saved name and folder.
             record = self.cuts_registry().get(request['timeline']['name'])
             self.editor = Editor(self.root, request, self.settings, self.render, self.cancelled, self.send,
-                                 pieces=record and pieces_of(request['timeline']), defaults=record)
+                                 pieces=record and pieces_of(request['timeline']), defaults=record, home=self.home)
         except Exception as error:
             write_state(self.home, request['id'], 'error', message=f'Could not read the timeline: {error}')
             self.done('Could not open', str(error))
 
     def send(self, command, record=None):
         """A command from the open window to the waiting Resolve script; its reply goes back to the window."""
+        if command['action'] == 'cuts':      # keep what was asked for, to check against Resolve later
+            batches = self.home / 'batches'
+            batches.mkdir(exist_ok=True)
+            stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+            (batches / f'{stamp} cuts.json').write_text(json.dumps(dict(request=self.request, command=command), indent=1),
+                                                        encoding='utf-8')
         self.seq += 1
         self.waiting, self.record = time.time(), record
         write_state(self.home, self.request['id'], 'ready', seq=self.seq, **command)
@@ -242,6 +248,14 @@ class Worker:
 
     def reply(self, result):
         self.waiting = None
+        if result['status'] == 'undone':
+            registry = self.cuts_registry()
+            registry.pop(result['timeline'], None)
+            atomic_text(self.home / 'cuts.json', json.dumps(registry, indent=1))
+            if result.get('ended'):
+                write_state(self.home, self.request['id'], 'cancelled')
+                self.stage, self.editor = 'idle', None
+                self.done('Cuts timeline deleted', result.get('message', ''))
         if result['status'] == 'cuts_ready' and self.record:
             registry = self.cuts_registry()
             registry[result['timeline']] = self.record
@@ -358,7 +372,7 @@ class Worker:
         if result and result_key(result) != self.result_seen:
             self.result_seen = result_key(result)
             mine = result.get('id') == self.seen
-            if result['status'] in ('cuts_ready', 'pieces', 'command_error') and mine and self.stage == 'editing':
+            if result['status'] in ('cuts_ready', 'pieces', 'undone', 'command_error') and mine and self.stage == 'editing':
                 self.reply(result)
             elif result['status'] == 'error' and self.stage != 'teasers':
                 log(self.home, f"Resolve error: {result.get('message', '')}")
@@ -383,8 +397,9 @@ class Worker:
             self.waiting = None
             self.editor.on_result(dict(status='command_error', message='Resolve did not answer. Is it still open with '
                                        'the Audio Sections script running? Close this window and run it again.'))
-        if self.stage == 'rendering' and time.time() - max(self.last_update, resolve_heartbeat(self.prefs)) > 90:
-            log(self.home, 'gave up: no word from Resolve for 90 s')
+        # Queueing many jobs and saving a big project can take minutes; Resolve reports each queued job.
+        if self.stage == 'rendering' and time.time() - max(self.last_update, resolve_heartbeat(self.prefs)) > 300:
+            log(self.home, 'gave up: no word from Resolve for 5 minutes')
             self.done('Could not finish', 'Resolve stopped responding. Check its render queue, then run Audio Sections again.')
         request = read_pref(self.prefs, 'AudioSectionsRequestV2')
         if self.stage == 'idle' and request and request.get('id') != self.seen:

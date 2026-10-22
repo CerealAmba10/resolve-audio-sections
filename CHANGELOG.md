@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8
+
+- Still images on video tracks no longer collapse to one frame on the cuts timeline: each is turned
+  into a video of its item's length (cached; a 3-hour still takes seconds) and placed like footage.
+- Undo cuts: deletes the cuts timeline in one click and switches back to your timeline.
+- Cuts timeline pieces are measured after placing: media that counts frames at another rate (other frame
+  rate, audio-only files) is re-placed at the right length, and a piece that still comes out wrong stops
+  Make cuts with a clear message instead of building a timeline with wrong lengths.
+- Resolve reports each queued job, and the helper waits up to 5 minutes, so queueing many clips in a big
+  project no longer ends in a false "Resolve stopped responding".
+- Make cuts saves its request in batches, for checking later.
+
 ## 1.7
 
 - Make cuts in Resolve places a blue "Teaser end" marker at the teaser length (30 s) into every clip

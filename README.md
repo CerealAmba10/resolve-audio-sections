@@ -52,7 +52,11 @@ add your own timeline marker with M and no clip selected; no marker means the fi
 from Resolve**: the preview and list show exactly your pieces, and **Render** renders them from
 the cuts timeline. Changing a setting goes back to automatic cuts (Load edits brings yours back);
 **Make cuts in Resolve** again builds a fresh cuts timeline. Running Audio Sections later on a
-cuts timeline opens the window with its pieces loaded. The cuts timeline holds plain media, so
+cuts timeline opens the window with its pieces loaded. **Undo cuts** deletes the cuts
+timeline in one go and switches back to your timeline. Still images on video tracks (for example
+one big picture under a long recording) are turned into a video of the same length first, kept in
+Documents → Audio Sections Plugin → stills and imported into an "Audio Sections stills" bin, so each
+piece shows the image for its full length instead of one frame. The cuts timeline holds plain media, so
 effects and transforms from the original timeline are not copied onto it.
 
 By default a clip only ends at **long digital silence**: more than 3 seconds where every

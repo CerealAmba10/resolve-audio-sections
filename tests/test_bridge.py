@@ -53,12 +53,15 @@ cuts = {GetName=function() return created end, GetStartFrame=function() return 8
     AddTrack=function(self, kind) if kind == 'video' then video_tracks = video_tracks + 1 end; return true end,
     GetTrackSubType=function() return 'stereo' end,
     SetClipsLinked=function(self, items, on) table.insert(linked, #items); return true end,
+    DeleteClips=function(self, items) removed = (removed or 0) + #items; return true end,
     AddMarker=function(self, frame, color, name) table.insert(markers, frame); return true end}
 pool = {CreateEmptyTimeline=function(self, name) created = name; table.insert(timelines, cuts); return cuts end,
     AppendToTimeline=function(self, infos)
         local info = infos[1]
         table.insert(appended, info)
-        local s, e = info.recordFrame, info.recordFrame + info.endFrame - info.startFrame
+        local m = info.mediaPoolItem
+        local length = (m.one_frame and 1) or math.floor((info.endFrame - info.startFrame) / (m.scale or 1) + 0.5)
+        local s, e = info.recordFrame, info.recordFrame + length
         local piece = {GetStart=function() return s end, GetEnd=function() return e end, GetClipEnabled=function() return true end,
             SetClipColor=function(_, c) table.insert(colors, c) end, SetSourceAudioChannelMapping=function() return true end}
         local kind = info.mediaType == 1 and 'video' or 'audio'
@@ -66,6 +69,15 @@ pool = {CreateEmptyTimeline=function(self, name) created = name; table.insert(ti
         table.insert(cut_items[kind][info.trackIndex], piece)
         return {piece} end,
     DeleteTimelines=function() deleted = true; return true end}
+bins, imported = {}, {}
+function media_at(path) return {GetClipProperty=function() return {['File Path']=path, FPS='24'} end} end
+pool.GetRootFolder = function() return {GetSubFolderList=function() return bins end} end
+pool.AddSubFolder = function(self, root, name)
+    local bin = {GetName=function() return name end, GetClipList=function() return imported end}
+    table.insert(bins, bin); return bin end
+pool.GetCurrentFolder = function() return 'previous' end
+pool.SetCurrentFolder = function() return true end
+pool.ImportMedia = function(self, paths) local m = media_at(paths[1]); m.still = true; table.insert(imported, m); return {m} end
 project.GetMediaPool = function() return pool end
 project.GetTimelineCount = function() return #timelines end
 project.GetTimelineByIndex = function(self, i) return timelines[i] end
@@ -167,6 +179,69 @@ class BridgeTest(unittest.TestCase):
         g, result = self.run_bridge(respond)
         self.assertEqual(result['status'], 'error')
         self.assertIn('Load edits', result['message'])
+
+    def test_still_on_video_track_uses_its_video_and_undo_deletes_cuts(self):
+        sent = []
+        def respond(home, request, g):
+            last = g.prefs['Global.AudioSectionsResultV1']
+            last = last and json.loads(base64.b64decode(last))
+            if last and last.get('seq') and (not sent or sent[-1] != last):
+                sent.append(last)
+            if not sent:
+                # V1 is one giant still image; its helper-made video is passed for that item.
+                g.tracks.video[1][1].GetMediaPoolItem = lambda self: g.media_at('C:/giant.png')
+                write_state(home, request['id'], 'ready', seq=1, action='cuts', teaser=720,
+                            clips=[dict(first=600, last=1199), dict(first=2000, last=2999)],
+                            stills={'video1:86400': 'C:/stills/giant 1.mp4'})
+            elif len(sent) == 1:
+                write_state(home, request['id'], 'ready', seq=2, action='undo', timeline=sent[0]['timeline'])
+            else:
+                write_state(home, request['id'], 'cancelled')
+        g, result = self.run_bridge(respond)
+        self.assertEqual([x['status'] for x in sent], ['cuts_ready', 'undone'], sent)
+        placed = [dict(a) for a in g.appended.values()]
+        video = [a for a in placed if a['mediaType'] == 1]
+        # Each V1 piece comes from the still's video, frames counted from the item start; imported once.
+        self.assertEqual([(a['mediaPoolItem'].still, a['startFrame'], a['endFrame']) for a in video],
+                         [(True, 600, 1200), (True, 2000, 3000)])
+        self.assertEqual(len(g.imported), 1)
+        self.assertEqual(g.bins[1].GetName(g.bins[1]), 'Audio Sections stills')
+        self.assertTrue(g.deleted)                                     # the cuts timeline is gone
+        self.assertEqual(g.current_timeline.GetName(g.current_timeline), 'Edit')   # back on the original
+
+    def cuts_only(self, setup):
+        def respond(home, request, g):
+            last = g.prefs['Global.AudioSectionsResultV1']
+            if last and json.loads(base64.b64decode(last)).get('seq'):
+                return write_state(home, request['id'], 'cancelled')
+            setup(g)
+            write_state(home, request['id'], 'ready', seq=1, action='cuts', teaser=720,
+                        clips=[dict(first=600, last=1199), dict(first=2000, last=2999)])
+        return self.run_bridge(respond)
+
+    def test_media_at_another_frame_rate_is_measured_and_replaced(self):
+        def setup(g):
+            quarter = g.media_at('C:/music 15fps.wav')
+            quarter.scale = 0.25                       # 1 timeline frame = 0.25 of this media's frames
+            g.tracks.audio[2][1].GetMediaPoolItem = lambda self: quarter
+        g, result = self.cuts_only(setup)
+        self.assertEqual(result['status'], 'cuts_ready', result)
+        music = [dict(a) for a in g.appended.values() if dict(a)['mediaPoolItem'].scale]
+        # First piece: placed at 600 source frames, came out 2400 long, removed, placed again at 150 from 150.
+        # Second piece reuses the measured rate straight away: offset 2000 -> 500, length 1000 -> 250.
+        self.assertEqual([(a['startFrame'], a['endFrame']) for a in music], [(600, 1200), (150, 300), (500, 750)])
+        self.assertEqual(g.removed, 1)
+
+    def test_piece_stuck_at_one_frame_stops_and_removes_the_cuts_timeline(self):
+        def setup(g):
+            still = g.media_at('C:/odd.jfif')
+            still.one_frame = True
+            g.tracks.video[1][1].GetMediaPoolItem = lambda self: still
+        g, result = self.cuts_only(setup)
+        self.assertEqual(result['status'], 'command_error', result)
+        self.assertIn('came out 1 frames long instead of 600', result['message'])
+        self.assertTrue(g.deleted)
+
 
 if __name__ == '__main__':
     unittest.main()
