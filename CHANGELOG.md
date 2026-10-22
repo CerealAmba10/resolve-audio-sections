@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10
+
+- Fix Make cuts refusing to build when an audio piece lands a frame or two off ("came out 3769 frames long
+  instead of 3767"). Small rounding differences are accepted; only real mismatches are re-placed or stop it.
+
 ## 1.9
 
 - Check for updates button in the Audio Sections window, next to the installed version. Updating from

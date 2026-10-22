@@ -180,7 +180,10 @@ local function build_cuts(p, source, clips, teaser, stills)
                     mediaType = kind == 'video' and 1 or 2, trackIndex = index, recordFrame = record}})
                 local piece = assert(added and added[1], 'Could not place a piece on ' .. kind .. ' track ' .. index)
                 local actual = piece:GetEnd() - piece:GetStart()
-                if math.abs(actual - length) <= 1 then
+                -- Audio often lands a frame or two off (it doesn't snap to frames); that is fine. Only a real
+                -- mismatch (another frame rate: minutes off) is measured and re-placed; after that, within 2%.
+                local slack = attempt == 1 and math.max(3, length * 0.005) or math.max(3, length * 0.02)
+                if math.abs(actual - length) <= slack then
                     ratios[key] = ratio
                     return piece
                 end

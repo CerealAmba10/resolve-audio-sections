@@ -60,7 +60,7 @@ pool = {CreateEmptyTimeline=function(self, name) created = name; table.insert(ti
         local info = infos[1]
         table.insert(appended, info)
         local m = info.mediaPoolItem
-        local length = (m.one_frame and 1) or math.floor((info.endFrame - info.startFrame) / (m.scale or 1) + 0.5)
+        local length = (m.one_frame and 1) or math.floor((info.endFrame - info.startFrame) / (m.scale or 1) + 0.5) + (m.extra or 0)
         local s, e = info.recordFrame, info.recordFrame + length
         local piece = {GetStart=function() return s end, GetEnd=function() return e end, GetClipEnabled=function() return true end,
             SetClipColor=function(_, c) table.insert(colors, c) end, SetSourceAudioChannelMapping=function() return true end}
@@ -241,6 +241,15 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(result['status'], 'command_error', result)
         self.assertIn('came out 1 frames long instead of 600', result['message'])
         self.assertTrue(g.deleted)
+
+    def test_audio_two_frames_long_is_accepted_as_is(self):
+        def setup(g):
+            loose = g.media_at('C:/music.wav')
+            loose.extra = 2                            # Resolve lands audio 2 frames long, like 3769 for 3767
+            g.tracks.audio[2][1].GetMediaPoolItem = lambda self: loose
+        g, result = self.cuts_only(setup)
+        self.assertEqual(result['status'], 'cuts_ready', result)
+        self.assertIsNone(g.removed)                   # nothing re-placed for a rounding difference
 
 
 if __name__ == '__main__':
