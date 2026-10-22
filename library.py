@@ -75,7 +75,7 @@ def fingerprint(path):
 def media_files(folder, skip=()):
     """Media in the folder and its subfolders, oldest first. Batch folders (copies) in `skip` are left out."""
     folder = Path(folder).resolve()
-    skip = [Path(s).resolve() for s in skip]
+    skip = [Path(s).resolve() for s in skip] + [folder / MANUAL_DIR]
     files = [p for p in folder.rglob('*') if p.is_file() and p.suffix.lower() in MEDIA and not p.name.startswith('.renaming-')
              and not any(s == p.parent or s in p.parents for s in skip)]
     return sorted(files, key=lambda p: (p.stat().st_mtime, p.name))
@@ -464,9 +464,9 @@ VIDEO = {'.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi'}
 
 
 def fill_rotation(db, folder, platform, month, size, rng=random):
-    """Add `size` random videos to a month's pool: ones never posted on this site first, nothing already in it."""
-    taken = {r['fp'] for r in db.execute('SELECT fp FROM rotation WHERE folder=? AND platform=? AND month=?',
-                                         (folder, platform, month))}
+    """Add `size` random videos from `folder` to a site's month pool: ones never posted on this site first,
+    nothing already in it."""
+    taken = {r['fp'] for r in db.execute('SELECT fp FROM rotation WHERE platform=? AND month=?', (platform, month))}
     posted = {r['fp'] for r in db.execute('SELECT fp FROM posts WHERE platform=?', (platform,))}
     clips = [r['fp'] for r in db.execute('SELECT fp, name FROM clips WHERE folder=? AND missing=0 AND parent IS NULL '
                                          'ORDER BY name', (folder,))
@@ -480,20 +480,20 @@ def fill_rotation(db, folder, platform, month, size, rng=random):
 
 
 def rotation(db, folder, platform, now, size=30, rng=random):
-    """This month's pool for a site, picked the first time it's opened in a new month."""
+    """This month's pool for a site. One pool per site and month, whichever folder is open: the first time it's
+    opened in a new month, it's picked from `folder`."""
     month = now.strftime('%Y-%m')
-    args = (folder, platform, month)
-    if not db.execute('SELECT 1 FROM rotation WHERE folder=? AND platform=? AND month=?', args).fetchone():
+    if not db.execute('SELECT 1 FROM rotation WHERE platform=? AND month=?', (platform, month)).fetchone():
         fill_rotation(db, folder, platform, month, size, rng)
-    return [dict(r) for r in db.execute("""SELECT r.id, r.fp, c.name, c.missing, p.at uploaded FROM rotation r
+    return [dict(r) for r in db.execute("""SELECT r.id, r.fp, r.folder, c.name, c.missing, p.at uploaded FROM rotation r
         JOIN clips c ON c.fp=r.fp LEFT JOIN posts p ON p.id=r.post
-        WHERE r.folder=? AND r.platform=? AND r.month=? ORDER BY r.id""", args)]
+        WHERE r.platform=? AND r.month=? ORDER BY r.id""", (platform, month))]
 
 
 def refresh_rotation(db, folder, platform, now, size=30, rng=random):
-    """Drop everything not uploaded yet from this month's pool and pick `size` new videos."""
+    """Drop everything not uploaded yet from this month's pool and pick `size` new videos from `folder`."""
     month = now.strftime('%Y-%m')
-    db.execute('DELETE FROM rotation WHERE folder=? AND platform=? AND month=? AND post IS NULL', (folder, platform, month))
+    db.execute('DELETE FROM rotation WHERE platform=? AND month=? AND post IS NULL', (platform, month))
     fill_rotation(db, folder, platform, month, size, rng)
 
 
@@ -515,6 +515,44 @@ def unmark_uploaded(db, item):
         db.execute('DELETE FROM posts WHERE id=?', (row['post'],))
         db.execute('UPDATE rotation SET post=NULL WHERE id=?', (item,))
         db.commit()
+
+
+MANUAL_DIR = 'Manual uploads'  # copies of each month's pool, left out of the library like batch copies
+
+
+def rotation_folder(db, platform, now, create=True):
+    """Copy this month's pool for a site, teasers too, into "Manual uploads/<site> <Month Year>" in the folder the
+    pool was last picked from. Copies of clips dropped from the pool are removed; anything else there is left alone.
+    With create=False, only a folder that already exists is updated; returns None otherwise."""
+    month = now.strftime('%Y-%m')
+    source = db.execute('SELECT folder FROM rotation WHERE platform=? AND month=? ORDER BY id DESC LIMIT 1',
+                        (platform, month)).fetchone()
+    if not source:
+        return None
+    target = Path(source['folder']) / MANUAL_DIR / f'{platform} {now:%B %Y}'
+    if not create and not target.is_dir():
+        return None
+    target.mkdir(parents=True, exist_ok=True)
+    wanted, fps = {}, set()
+    rows = db.execute("""SELECT c.fp, c.folder, c.name FROM rotation r JOIN clips c ON c.fp=r.fp OR c.parent=r.fp
+        WHERE r.platform=? AND r.month=? AND c.missing=0 ORDER BY r.id, c.parent IS NOT NULL""",
+                      (platform, month)).fetchall()
+    for row in rows:
+        source = Path(row['folder']) / row['name']
+        name, n = source.name, 1
+        while name.lower() in wanted:  # same file name from two subfolders
+            n += 1
+            name = f'{source.stem} ({n}){source.suffix}'
+        wanted[name.lower()] = (name, source)
+        fps.add(row['fp'])
+    library_fps = {r['fp'] for r in db.execute('SELECT fp FROM clips')}
+    for path in target.iterdir():
+        if path.is_file() and path.name.lower() not in wanted and fingerprint(path) in library_fps - fps:
+            path.unlink()  # a copy of a library clip that's no longer in the pool; the original stays
+    for name, source in wanted.values():
+        if source.is_file() and not (target / name).exists():
+            shutil.copy2(source, target / name)
+    return target
 
 
 POST_URLS = {'Fansly': 'https://fansly.com/post/{id}'}  # add RedGifs/Pornhub once their post pages are known

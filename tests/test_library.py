@@ -248,6 +248,37 @@ class FolderTests(unittest.TestCase):
         self.assertNotEqual({p['fp'] for p in library.rotation(self.db, folder, 'Instagram', NOW + timedelta(days=31))},
                             set())  # next month: a new pool
         self.assertEqual(len(library.rotation(self.db, folder, 'TikTok', NOW)), 30)  # each site has its own
+        other = Path(self.temp.name, 'other')
+        other.mkdir()
+        (other / 'o.mp4').write_bytes(b'other folder')
+        library.scan(self.db, other)
+        self.assertEqual(library.rotation(self.db, str(other.resolve()), 'TikTok', NOW)[0]['fp'],
+                         library.rotation(self.db, folder, 'TikTok', NOW)[0]['fp'])  # same pool from any folder
+        library.refresh_rotation(self.db, str(other.resolve()), 'TikTok', NOW)  # a new rotation picks from the open one
+        self.assertEqual([Path(p['name']).name for p in library.rotation(self.db, folder, 'TikTok', NOW)], ['o.mp4'])
+
+    def test_rotation_folder_holds_the_months_pool(self):
+        self.fill(['Gym.mp4', 'Gym teaser.mp4', 'IRL.mp4'])
+        (self.folder / 'sub').mkdir()
+        (self.folder / 'sub' / 'IRL.mp4').write_bytes(b'other irl')
+        library.scan(self.db, self.folder)
+        folder = str(self.folder.resolve())
+        self.assertEqual(len(library.rotation(self.db, folder, 'Instagram', NOW)), 3)  # teasers aren't picked
+        target = library.rotation_folder(self.db, 'Instagram', NOW)
+        self.assertEqual(target, self.folder / 'Manual uploads' / 'Instagram October 2026')
+        self.assertEqual({p.name for p in target.iterdir()},  # the teaser comes along; same names get (2)
+                         {'Gym.mp4', 'Gym teaser.mp4', 'IRL.mp4', 'IRL (2).mp4'})
+        (target / 'my notes.txt').write_text('mine')
+        self.assertEqual(library.scan(self.db, self.folder), 4)  # the copies aren't new clips
+        library.refresh_rotation(self.db, folder, 'Instagram', NOW, size=0)  # pool emptied
+        self.assertIsNone(library.rotation_folder(self.db, 'Instagram', NOW))
+        library.rotation(self.db, folder, 'Instagram', NOW, size=1)
+        self.assertEqual(library.rotation_folder(self.db, 'Instagram', NOW), target)
+        library.refresh_rotation(self.db, folder, 'Instagram', NOW, size=0)
+        self.db.execute("INSERT INTO rotation(folder, platform, month, fp) VALUES(?, 'Instagram', '2026-10', 'none')", (folder,))
+        library.rotation_folder(self.db, 'Instagram', NOW)
+        self.assertEqual([p.name for p in target.iterdir()], ['my notes.txt'])  # copies gone, the rest left alone
+        self.assertEqual(len(list(self.folder.rglob('*.mp4'))), 4)  # originals untouched
 
     def test_scan_flags_missing_files(self):
         library.scan(self.db, self.folder)

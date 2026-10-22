@@ -377,7 +377,9 @@ async function loadManual() {
 
 function renderManual() {
   const done = manual.items.filter(i => i.uploaded).length;
-  $('manual-summary').textContent = `${manual.month} · ${done} of ${manual.items.length} uploaded`;
+  const source = manual.items.at(-1)?.folder;
+  $('manual-summary').textContent = `${manual.month}${source ? ` · from ${source.split(/[\\/]/).pop()}` : ''}` +
+    ` · ${done} of ${manual.items.length} uploaded`;
   const rows = manual.items.filter(i => !manual.show || (manual.show === 'uploaded') === !!i.uploaded);
   $('manual-list').replaceChildren(...rows.map(i => {
     const name = i.name.split('/').pop();
@@ -395,6 +397,10 @@ function renderManual() {
         : el('button', {class: 'ghost small', onclick: run(() => markUploaded([i.id]))}, 'Uploaded'));
   }));
   $('manual-empty').hidden = manual.items.length > 0;
+  $('manual-empty').textContent = !manual.files ? 'No clips found in this folder yet. Click Rescan, or check the folder in the sidebar.'
+    : !manual.videos ? `None of the ${manual.files} files in this folder are videos (.mp4, .mov, .mkv, .webm, .m4v, .avi).`
+    : `This folder has ${manual.videos} videos, but none could go in the pool (teasers aren't picked). Try New rotation.`;
+  $('manual-folder').disabled = !manual.items.length;
   manualFooter();
 }
 
@@ -415,7 +421,8 @@ async function markUploaded(ids) {
 
 async function refreshRotation() {
   const queued = manual.items.filter(i => !i.uploaded).length;
-  if (!confirm(`Replace the ${queued} clip${queued === 1 ? '' : 's'} not uploaded yet with 30 new random ones for ${manualSite()}? ` +
+  const from = state.folders.find(f => f.path === state.folder)?.name || 'this folder';
+  if (!confirm(`Replace the ${queued} clip${queued === 1 ? '' : 's'} not uploaded yet with 30 new random ones from ${from} for ${manualSite()}? ` +
                'Uploaded clips stay logged.')) return;
   await api('/api/rotation/refresh', {folder: state.folder, platform: manualSite()});
   manual.picked.clear();
@@ -712,6 +719,10 @@ $('manual-all').onchange = () => {
 };
 $('manual-mark').onclick = run(() => markUploaded([...manual.picked]));
 $('manual-refresh').onclick = run(refreshRotation);
+$('manual-folder').onclick = run(async () => {
+  toast('Copying this month’s videos…');
+  await api('/api/rotation/folder', {platform: manualSite()});
+});
 $('chart').addEventListener('mousemove', e => {
   const tip = $('tooltip');
   const text = e.target.dataset?.tip;

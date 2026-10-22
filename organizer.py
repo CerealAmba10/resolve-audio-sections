@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import library
 
-VERSION = '1.1.0'
+VERSION = '1.1.1'
 PORT = 47833
 REPO = 'CerealAmba10/resolve-audio-sections'
 ASSET = 'DuckysClipOrganizer.exe'
@@ -281,8 +281,16 @@ class App:
                 if platforms else ([], [])
             return dict(path=str(target), name=target.name, copied=len(chosen), planned=len(items), skipped=skipped)
         if path == '/api/rotation/refresh':
-            library.refresh_rotation(self.db, self.known(body['folder']), self.site(body['platform']), datetime.now())
+            folder, platform, now = self.known(body['folder']), self.site(body['platform']), datetime.now()
+            library.refresh_rotation(self.db, folder, platform, now)
+            library.rotation_folder(self.db, platform, now, create=False)  # keep the month's folder in step
             return dict(ok=True)
+        if path == '/api/rotation/folder':
+            target = library.rotation_folder(self.db, self.site(body['platform']), datetime.now())
+            if not target:
+                raise ValueError('Nothing in this month’s pool yet.')
+            os.startfile(target)
+            return dict(path=str(target))
         if path == '/api/rotation/uploaded':
             library.mark_uploaded(self.db, body['ids'], datetime.now())
             return dict(ok=True)
@@ -384,10 +392,11 @@ class App:
 
     def get(self, path, query):
         if path == '/api/rotation':
-            now = datetime.now()
-            items = library.rotation(self.db, self.known(query.get('folder', [''])[0]),
-                                     self.site(query.get('platform', [''])[0]), now)
-            return dict(month=now.strftime('%B %Y'), items=items)
+            now, folder = datetime.now(), self.known(query.get('folder', [''])[0])
+            items = library.rotation(self.db, folder, self.site(query.get('platform', [''])[0]), now)
+            names = [r['name'] for r in self.db.execute('SELECT name FROM clips WHERE folder=? AND missing=0', (folder,))]
+            return dict(month=now.strftime('%B %Y'), items=items, files=len(names),
+                        videos=sum(Path(n).suffix.lower() in library.VIDEO for n in names))
         if path == '/api/state':
             return self.state()
         if path == '/api/clips':
@@ -456,8 +465,11 @@ def make_handler(app):
                     while block := f.read(1 << 20):
                         self.wfile.write(block)
                 return
-            with app.lock:
-                data = app.get(path, parse_qs(url.query))
+            try:
+                with app.lock:
+                    data = app.get(path, parse_qs(url.query))
+            except (ValueError, KeyError, OSError) as error:
+                return self.send_json({'error': str(error)}, 400)
             return self.send_json(data) if data is not None else self.reply(404)
 
         def do_POST(self):

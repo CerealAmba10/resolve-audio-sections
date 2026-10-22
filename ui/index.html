@@ -154,12 +154,15 @@
         </div>
         <span class="summary" id="manual-summary"></span>
       </div>
-      <p class="hint">30 random videos a month for each site, ones never posted there first. Upload them by hand, then mark
-        them uploaded: each is logged with the site and the month it went up, and greys out until next month's pool.</p>
+      <p class="hint">30 random videos a month for each site, ones never posted there first, picked from the folder
+        selected on the left (pick another folder, then <b>New rotation</b>, to draw from it). Upload them by hand, then mark
+        them uploaded: each is logged with the site and the month it went up, and greys out until next month's pool.
+        <b>Open folder</b> copies the month's videos into <b>Manual uploads / Site Month Year</b> so they're easy to find.</p>
       <ol class="batch-list manual-list" id="manual-list"></ol>
       <p class="empty" id="manual-empty" hidden>No videos in this folder to pick from.</p>
       <div class="actions sticky">
         <label class="check"><input type="checkbox" id="manual-all"> Select all queued</label>
+        <button class="ghost" id="manual-folder" disabled>Open folder</button>
         <button class="ghost" id="manual-refresh">New rotation</button>
         <button class="primary" id="manual-mark" disabled>Mark uploaded</button>
       </div>
