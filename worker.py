@@ -97,6 +97,11 @@ def result_key(result):
     return result and (result.get('id'), result.get('status'), result.get('seq'), result.get('progress'))
 
 
+def project_key(request):
+    """Resolve's project id survives renames; older Resolve scripts only send the name."""
+    return request.get('project_id') or request.get('project') or ''
+
+
 def pieces_of(timeline):
     """Clips of a reviewed cuts timeline: enabled items on its first non-empty track (video first), with markers."""
     track = next((t for k in ('video', 'audio') for t in timeline[k] if t['items']), None)
@@ -255,8 +260,13 @@ class Worker:
         try:
             # A cuts timeline made earlier opens with its pieces as the clips, and its saved name and folder.
             record = self.cuts_registry().get(request['timeline']['name'])
+            # The project has the authority over clip name and folder: what was last used in this project wins
+            # over a cuts timeline's record; a project's first run is named after the project.
+            remembered = self.settings.get('projects', {}).get(project_key(request), {})
+            names = {**(record or {}), **remembered}
+            names.setdefault('stem', request.get('project') or '')
             self.editor = Editor(self.root, request, self.settings, self.render, self.cancelled, self.send,
-                                 pieces=record and pieces_of(request['timeline']), defaults=record, home=self.home,
+                                 pieces=record and pieces_of(request['timeline']), defaults=names, home=self.home,
                                  check_updates=self.check_now)
         except Exception as error:
             write_state(self.home, request['id'], 'error', message=f'Could not read the timeline: {error}')
@@ -264,6 +274,8 @@ class Worker:
 
     def send(self, command, record=None):
         """A command from the open window to the waiting Resolve script; its reply goes back to the window."""
+        if record:
+            self.remember_project(record['stem'], record['output'])
         if command['action'] == 'cuts':      # keep what was asked for, to check against Resolve later
             batches = self.home / 'batches'
             batches.mkdir(exist_ok=True)
@@ -297,12 +309,16 @@ class Worker:
         write_state(self.home, self.request['id'], 'cancelled')
         self.stage, self.editor = 'idle', None
 
-    def render(self, batch):
-        self.batch, self.editor, self.stage = batch, None, 'rendering'
+    def remember_project(self, stem, output):
+        self.settings.setdefault('projects', {})[project_key(self.request)] = dict(stem=stem, output=output)
         try:
             self.settings_file.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
         except OSError:
             pass
+
+    def render(self, batch):
+        self.batch, self.editor, self.stage = batch, None, 'rendering'
+        self.remember_project(batch['stem'], batch['output'])     # also saves the other settings
         batches = self.home / 'batches'
         batches.mkdir(exist_ok=True)
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')

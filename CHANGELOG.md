@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.11
+
+- Clip name and export folder are remembered per Resolve project (by its id, so renaming the project keeps
+  them) and the project wins over cuts-timeline records and other projects. A project's first run uses
+  the project's name and the folder beside the recording.
+
 ## 1.10
 
 - Fix Make cuts refusing to build when an audio piece lands a frame or two off ("came out 3769 frames long

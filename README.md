@@ -102,8 +102,9 @@ finishes that clip, while the rest are still rendering, so teasers appear in the
 Resolve's render queue. Each step is written to Documents → Audio Sections Plugin → log.txt.
 
 Numbering continues after the highest number already in the export folder or render
-queue. Existing files are never overwritten. The default name and folder come from the
-main recording ("Audio Sections Exports" beside it); both can be changed in the window.
+queue. Existing files are never overwritten. Each Resolve project remembers the name and
+folder last used in it; a project's first run uses the project's name and "Audio Sections Exports"
+beside the main recording. Both can be changed in the window.
 
 ## Export settings
 

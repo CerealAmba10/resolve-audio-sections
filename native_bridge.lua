@@ -262,7 +262,7 @@ local function run()
     end
     f:SetPrefs('Global.AudioSectionsActiveV1', id)
     f:SetPrefs('Global.AudioSectionsHeartbeatV1', os.time())
-    f:SetPrefs('Global.AudioSectionsRequestV2', base64(json({id = id, project = p:GetName(),
+    f:SetPrefs('Global.AudioSectionsRequestV2', base64(json({id = id, project = p:GetName(), project_id = call(p, 'GetUniqueId'),
         timeline = describe(timeline), queued = queued})))
     f:SavePrefs()
 
