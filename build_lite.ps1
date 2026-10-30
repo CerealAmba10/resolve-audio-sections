@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-python -m PyInstaller --noconfirm --windowed --onefile --name 'Audio Sections Setup' --add-data 'native_bridge.lua;.' --add-data 'integration/Audio Sections High.xml;integration' plugin_entry.py
+python -m PyInstaller --noconfirm --windowed --onefile --exclude-module numpy --name 'Audio Sections Setup' --add-data 'native_bridge.lua;.' --add-data 'integration/Audio Sections High.xml;integration' plugin_entry.py
 if ($LASTEXITCODE -ne 0) { throw 'Compact installer build failed.' }
 New-Item -ItemType Directory -Path dist/AudioSectionsLite -Force | Out-Null
 Copy-Item -LiteralPath 'dist/Audio Sections Setup.exe' -Destination dist/AudioSectionsLite -Force

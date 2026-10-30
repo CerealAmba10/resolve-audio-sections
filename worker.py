@@ -19,7 +19,8 @@ from tkinter import messagebox, ttk
 import detection as d
 from editor import Editor
 import updater
-from media import fade_out, frame_count, make_teaser, resource_path
+from media import finish_full, frame_count, make_teaser, resource_path, video_size
+from thumbnail import deal_titles, load_titles, render as render_thumbnail
 
 PRESET = 'Audio Sections High'
 SETTINGS_SCHEMA = 2      # bump when cutting defaults change, so saved old values are reset
@@ -110,17 +111,38 @@ def pieces_of(timeline):
 
 
 def finish_clip(batch, job):
-    """Cut one teaser from its rendered full clip, then fade the clip if asked. Returns a warning or None."""
+    """Cut one teaser from its rendered full clip, then finish the clip (fade-out, thumbnail). Returns a warning or None.
+    With a thumbnail, both files open on it for the clip's chosen seconds, get it as their cover, and it is saved
+    beside them as a .png; the teaser shows "TEASER: N", the full clip only if asked."""
     fps, output = Fraction(batch['fps']), Path(batch['output'])
     full = output / (job['name'] + '.mp4')
     if not full.is_file():
         raise ValueError(f'Resolve did not produce {full.name}.')
     frames = frame_count(full)
-    make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps, batch['fade'])
-    if batch.get('clip_fade', 0) > 0:     # after the teaser, so the teaser is cut from the unfaded clip
-        fade_out(full, frames or job['frames'], fps, batch['clip_fade'])
+    teaser_thumb = full_thumb = None
+    thumb, seconds = batch.get('thumb'), job.get('thumb_seconds', 0)
+    if thumb:
+        width, height = video_size(full)
+        label = f"TEASER: {job['teaser_index']}"
+        teaser_thumb, full_thumb = output / (job['teaser'] + '.png'), output / (job['name'] + '.png')
+        fonts = dict(font_path=thumb.get('title_font') or None, label_font=thumb.get('label_font') or None)
+        render_thumbnail(thumb['background'], job.get('title', ''), label, width, height, **fonts).save(teaser_thumb)
+        render_thumbnail(thumb['background'], job.get('title', ''), label if thumb.get('full_label') else '',
+                         width, height, **fonts).save(full_thumb)
+    make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps,
+                batch['fade'], teaser_thumb, seconds)
+    # After the teaser, so the teaser is cut from the untouched clip.
+    finish_full(full, frames or job['frames'], fps, batch.get('clip_fade', 0), full_thumb, seconds)
     if frames is not None and frames != job['frames']:
         return f"{full.name}: {frames} frames rendered, {job['frames']} expected."
+
+
+def timeline_key(request):
+    """Teasers are counted per project and timeline; a cuts timeline counts toward the timeline it came from."""
+    name = request['timeline']['name']
+    while re.search(r' \(cuts( \d+)?\)$', name):
+        name = re.sub(r' \(cuts( \d+)?\)$', '', name)
+    return f'{project_key(request)}|{name}'
 
 
 class Worker:
@@ -309,8 +331,13 @@ class Worker:
         write_state(self.home, self.request['id'], 'cancelled')
         self.stage, self.editor = 'idle', None
 
-    def remember_project(self, stem, output):
-        self.settings.setdefault('projects', {})[project_key(self.request)] = dict(stem=stem, output=output)
+    def remember_project(self, stem, output, thumb=None):
+        remembered = self.settings.setdefault('projects', {}).setdefault(project_key(self.request), {})
+        remembered.update(stem=stem, output=output)
+        if thumb:
+            remembered.update(thumb_background=thumb['background'], thumb_titles=thumb['titles'],
+                              thumb_seconds=thumb['seconds'], thumb_full_label=thumb['full_label'],
+                              title_font=thumb.get('title_font', ''), label_font=thumb.get('label_font', ''))
         try:
             self.settings_file.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
         except OSError:
@@ -318,7 +345,16 @@ class Worker:
 
     def render(self, batch):
         self.batch, self.editor, self.stage = batch, None, 'rendering'
-        self.remember_project(batch['stem'], batch['output'])     # also saves the other settings
+        if batch.get('thumb'):
+            # Next "TEASER: N" numbers for this timeline, and one title per clip pair from the titles file.
+            counts = self.settings.setdefault('teaser_counts', {})
+            key = timeline_key(self.request)
+            titles = deal_titles(load_titles(batch['thumb']['titles']), len(batch['jobs'])) if batch['thumb']['titles'] else []
+            for n, job in enumerate(batch['jobs']):
+                job['teaser_index'] = counts.get(key, 0) + n + 1
+                job['title'] = titles[n] if n < len(titles) else ''
+            counts[key] = counts.get(key, 0) + len(batch['jobs'])
+        self.remember_project(batch['stem'], batch['output'], batch.get('thumb'))     # also saves the other settings
         batches = self.home / 'batches'
         batches.mkdir(exist_ok=True)
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')

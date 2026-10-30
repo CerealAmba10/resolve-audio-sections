@@ -1,5 +1,6 @@
 """Choose primary/background tracks, preview the cuts and pick which clips to render."""
 import hashlib
+import os
 import queue
 import threading
 import tkinter as tk
@@ -116,6 +117,7 @@ class Editor:
 
         options = ttk.LabelFrame(top, text='Cutting', padding=8)
         options.grid(row=0, column=1, sticky='nsew', padx=(10, 0))
+        self.build_thumbnail_panel(top)
         self.values, self.pause_widgets = {}, []
         for row, (key, label, step, low, high) in enumerate(SETTINGS):
             self.values[key] = tk.DoubleVar(value=self.settings.get(key, d.DEFAULTS[key]))
@@ -155,10 +157,10 @@ class Editor:
         bottom = ttk.Frame(outer)
         bottom.grid(row=4, column=0, sticky='nsew')
         bottom.columnconfigure(0, weight=1)
-        self.table = ttk.Treeview(bottom, columns=('use', 'name', 'start', 'end', 'length'), show='headings',
+        self.table = ttk.Treeview(bottom, columns=('use', 'name', 'start', 'end', 'length', 'thumb'), show='headings',
                                   height=7, selectmode='browse')
-        for column, label, width in [('use', 'Render', 70), ('name', 'Name', 260), ('start', 'Start', 120),
-                                     ('end', 'End', 120), ('length', 'Length', 110)]:
+        for column, label, width in [('use', 'Render', 60), ('name', 'Name', 200), ('start', 'Start', 95),
+                                     ('end', 'End', 95), ('length', 'Length', 80), ('thumb', 'Thumbnail', 110)]:
             self.table.heading(column, text=label)
             self.table.column(column, width=width, anchor='w')
         self.table.grid(row=0, column=0, sticky='nsew')
@@ -210,6 +212,115 @@ class Editor:
         """Grey out the settings that only apply when splitting at pauses."""
         for widget in self.pause_widgets:
             widget.state(['!disabled'] if self.pauses.get() else ['disabled'])
+
+    def build_thumbnail_panel(self, top):
+        """Background picture, titles file and how long the thumbnail opens each video (all clips, or per clip)."""
+        panel = ttk.LabelFrame(top, text='Thumbnail', padding=8)
+        panel.grid(row=0, column=2, sticky='nsew', padx=(10, 0))
+        self.thumb_background = tk.StringVar(value=self.defaults.get('thumb_background', ''))
+        self.thumb_titles = tk.StringVar(value=self.defaults.get('thumb_titles', ''))
+        self.thumb_seconds = tk.DoubleVar(value=self.defaults.get('thumb_seconds', 1.0))
+        self.thumb_full_label = tk.BooleanVar(value=self.defaults.get('thumb_full_label', False))
+        self.title_font = tk.StringVar(value=self.defaults.get('title_font', ''))
+        self.label_font = tk.StringVar(value=self.defaults.get('label_font', ''))
+        fonts = [('Fonts', '*.ttf *.otf *.ttc')]
+        for row, (label, var, types) in enumerate([('Background', self.thumb_background, [('Pictures', '*.png *.jpg *.jpeg')]),
+                                                   ('Titles (.txt)', self.thumb_titles, [('Text', '*.txt')]),
+                                                   ('Title font', self.title_font, fonts),
+                                                   ('Label font', self.label_font, fonts)]):
+            ttk.Label(panel, text=label).grid(row=row, column=0, sticky='w')
+            ttk.Entry(panel, textvariable=var, width=22).grid(row=row, column=1, sticky='ew', pady=1)
+            ttk.Button(panel, text='…', width=3, command=lambda v=var, t=types: self.pick_file(v, t)).grid(
+                row=row, column=2, padx=(4, 0))
+        ttk.Label(panel, text='Show at start of all clips (s)').grid(row=4, column=0, columnspan=2, sticky='w')
+        ttk.Spinbox(panel, textvariable=self.thumb_seconds, from_=0, to=60, increment=0.5, width=6).grid(row=4, column=2)
+        ttk.Checkbutton(panel, text='TEASER: N on full clips too', variable=self.thumb_full_label).grid(
+            row=5, column=0, columnspan=3, sticky='w')
+        self.clip_thumb = tk.DoubleVar(value=1.0)
+        self.clip_thumb_label = ttk.Label(panel, text='Selected clip (s)', foreground=COLORS['dim'])
+        self.clip_thumb_label.grid(row=6, column=0, columnspan=2, sticky='w')
+        self.clip_thumb_box = ttk.Spinbox(panel, textvariable=self.clip_thumb, from_=0, to=60, increment=0.5, width=6,
+                                          state='disabled')
+        self.clip_thumb_box.grid(row=6, column=2)
+        actions = ttk.Frame(panel)
+        actions.grid(row=7, column=0, columnspan=3, sticky='ew', pady=(4, 0))
+        self.clip_thumb_reset = ttk.Button(actions, text='Use all-clips value', state='disabled', command=self.reset_clip_thumb)
+        self.clip_thumb_reset.pack(side='left')
+        ttk.Button(actions, text='Preview', command=self.preview_thumbnail).pack(side='right')
+        self.clip_thumb.trace_add('write', lambda *a: self.set_clip_thumb())
+        for var in (self.thumb_background, self.thumb_titles, self.thumb_seconds):
+            var.trace_add('write', lambda *a: self.refresh_table())
+
+    def pick_file(self, var, types):
+        chosen = filedialog.askopenfilename(parent=self.win, filetypes=types + [('All files', '*.*')],
+                                            initialdir=str(Path(var.get()).parent) if var.get() else None)
+        if chosen:
+            var.set(chosen)
+
+    def thumb_default(self):
+        try:
+            return max(0.0, float(self.thumb_seconds.get()))
+        except (tk.TclError, ValueError):
+            return 1.0
+
+    def clip_thumb_seconds(self, section):
+        return section.get('thumb', self.thumb_default())
+
+    def set_clip_thumb(self):
+        """The per-clip spinbox: a value here overrides the all-clips value for the selected clip."""
+        if self.quiet or self.selected is None or self.selected >= len(self.sections):
+            return
+        try:
+            self.sections[self.selected]['thumb'] = max(0.0, float(self.clip_thumb.get()))
+        except (tk.TclError, ValueError):
+            return
+        self.refresh_table()
+
+    def reset_clip_thumb(self):
+        if self.selected is not None and self.selected < len(self.sections):
+            self.sections[self.selected].pop('thumb', None)
+            self.show_clip_thumb()
+            self.refresh_table()
+
+    def show_clip_thumb(self):
+        section = self.sections[self.selected] if self.selected is not None and self.selected < len(self.sections) else None
+        self.quiet = True
+        self.clip_thumb.set(self.clip_thumb_seconds(section) if section else self.thumb_default())
+        self.quiet = False
+        state = 'normal' if section else 'disabled'
+        self.clip_thumb_box.configure(state=state)
+        self.clip_thumb_reset.configure(state='normal' if section and 'thumb' in section else 'disabled')
+        self.clip_thumb_label.configure(text=f'Clip at {clock(section["start"])} (s)' if section else 'Selected clip (s)',
+                                        foreground='' if section else COLORS['dim'])
+
+    def thumb_settings(self):
+        """What the helper needs to draw thumbnails, or None when no background is chosen."""
+        background = self.thumb_background.get().strip()
+        if not background:
+            return None
+        return dict(background=background, titles=self.thumb_titles.get().strip(), seconds=self.thumb_default(),
+                    full_label=bool(self.thumb_full_label.get()), title_font=self.title_font.get().strip(),
+                    label_font=self.label_font.get().strip())
+
+    def preview_thumbnail(self):
+        thumb = self.thumb_settings()
+        if not thumb or not Path(thumb['background']).is_file():
+            return messagebox.showerror('Thumbnail', 'Choose a background picture first.', parent=self.win)
+        try:
+            from thumbnail import deal_titles, find_font, load_titles, render
+            titles = load_titles(thumb['titles']) if thumb['titles'] else []
+            title = (deal_titles(titles, 1) or ['Your title from the text file'])[0]
+            width, height = int(self.request['timeline'].get('width') or 1920), int(self.request['timeline'].get('height') or 1080)
+            target = self.home / 'thumbnail preview.png'
+            target.parent.mkdir(parents=True, exist_ok=True)
+            render(thumb['background'], title, 'TEASER: 1', width, height, thumb['title_font'] or None,
+                   label_font=thumb['label_font'] or None).save(target)
+            missing = [name for kind, name in (('title', 'Komika Axis'),) if not find_font(kind)[1]]
+            if missing:
+                self.status.set(f"{' and '.join(missing)} not installed on this computer, so a stand-in font is used.")
+            os.startfile(target)
+        except Exception as error:
+            messagebox.showerror('Thumbnail', str(error), parent=self.win)
 
     def main_source(self):
         items = [i for t in self.tracks if t['role'].get() == 'Primary' for i in t['items'] if i.get('path')]
@@ -325,8 +436,11 @@ class Editor:
                 teaser = f', teaser {float(marked / self.fps):.1f} s to marker' if marked else ''
                 name, number = f'{self.stem.get().strip()} {number}  (+ {number}T{teaser})', number + 1
             use = ('✔ quiet' if section.get('quiet') else '✔') if section['use'] and section['keep'] else                 ('too short' if not section['keep'] else '—')
+            shown = self.clip_thumb_seconds(section)
+            thumb = ('—' if not self.thumb_settings() else 'cover only' if shown <= 0 else f'{shown:g} s') + \
+                (' (this clip)' if 'thumb' in section and self.thumb_settings() else '')
             self.table.insert('', 'end', iid=str(i), values=(use, name, clock(section['start']),
-                                                              clock(section['end']), f'{length:.2f} s'),
+                                                              clock(section['end']), f'{length:.2f} s', thumb),
                               tags=() if section['keep'] else ('short',))
         if self.selected is not None and self.selected < len(self.sections):
             self.table.selection_set(str(self.selected))
@@ -347,6 +461,7 @@ class Editor:
         chosen = self.table.selection()
         if chosen and int(chosen[0]) != self.selected:
             self.selected = int(chosen[0])
+            self.show_clip_thumb()
             section = self.sections[self.selected]
             margin = max(5.0, (section['end'] - section['start']) * 0.1)
             self.view = [max(0.0, section['start'] - margin), min(self.duration, section['end'] + margin)]
@@ -512,6 +627,11 @@ class Editor:
             return messagebox.showerror('File name', 'Enter a file name without \\ / : * ? " < > |', parent=self.win)
         if not folder.is_absolute():
             return messagebox.showerror('Folder', 'Choose an output folder.', parent=self.win)
+        thumb = self.thumb_settings()
+        for label, path in (('background picture', thumb and thumb['background']), ('titles file', thumb and thumb['titles']),
+                            ('title font', thumb and thumb['title_font']), ('label font', thumb and thumb['label_font'])):
+            if path and not Path(path).is_file():
+                return messagebox.showerror('Thumbnail', f'The {label} was not found:\n{path}', parent=self.win)
         teaser_frames = round(self.setting('teaser') * float(self.fps))
         jobs, number = [], self.first_number()
         for s in self.included():
@@ -521,7 +641,7 @@ class Editor:
                 if (folder / (output + '.mp4')).exists():
                     return messagebox.showerror('Already exists', f'{output}.mp4 already exists in that folder.', parent=self.win)
             base = self.target['start'] if self.target else self.timeline['start']
-            jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first,
+            jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first, thumb_seconds=self.clip_thumb_seconds(s),
                              mark_out=base + last, frames=last - first + 1, first=first, last=last,
                              # a marker on the cuts timeline ends the teaser; else the setting (short clip: whole clip)
                              teaser_frames=s.get('teaser_frames') or min(teaser_frames, last - first + 1),
@@ -543,6 +663,7 @@ class Editor:
         self.cancel.set()
         self.win.destroy()
         self.on_render(dict(stem=stem, output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,
+                            thumb=self.thumb_settings(),
                             fade=self.setting('fade'), clip_fade=self.setting('clip_fade'), jobs=jobs,
                             timeline=self.target['name'] if self.target else None,
                             tracks={t['label']: dict(role=t['role'].get(), threshold=self.threshold(t))

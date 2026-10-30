@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-python -m PyInstaller --noconfirm --windowed --onedir --name AudioSectionsWorker --add-data 'native_bridge.lua;.' --add-data 'integration/Audio Sections High.xml;integration' --add-binary 'tools/ffmpeg.exe;tools' --add-binary 'tools/ffprobe.exe;tools' worker.py
+python -m PyInstaller --noconfirm --windowed --onedir --exclude-module numpy --name AudioSectionsWorker --add-data 'native_bridge.lua;.' --add-data 'integration/Audio Sections High.xml;integration' --add-binary 'tools/ffmpeg.exe;tools' --add-binary 'tools/ffprobe.exe;tools' worker.py
 if ($LASTEXITCODE -ne 0) { throw 'Worker build failed.' }
 python -m PyInstaller --noconfirm --windowed --onefile --name 'Install Audio Sections' setup_plugin.py
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }

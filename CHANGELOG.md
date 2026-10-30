@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.12
+
+- Thumbnails: pick a background picture and a titles text file. Every clip and teaser opens on a thumbnail
+  (background, a random title top-left in pink with a black and a white outline, and "TEASER: N" top-right
+  in white with a black and a cyan outline, both in Komika Axis with a soft shadow) for a set number of seconds; set it for all clips or
+  per clip, and choose whether full clips show "TEASER: N" too. N counts teasers per timeline. The
+  picture is also the MP4 cover and saved beside each video as .png. Fonts default to Komika Axis when
+  installed;
+  both can be chosen. Preview shows the result before rendering.
+- Settings for thumbnails are remembered per Resolve project.
+- Pillow is bundled for drawing the thumbnails; numpy is kept out of the build.
+
 ## 1.11
 
 - Clip name and export folder are remembered per Resolve project (by its id, so renaming the project keeps

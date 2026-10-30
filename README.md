@@ -106,6 +106,20 @@ queue. Existing files are never overwritten. Each Resolve project remembers the 
 folder last used in it; a project's first run uses the project's name and "Audio Sections Exports"
 beside the main recording. Both can be changed in the window.
 
+## Thumbnails
+
+In the **Thumbnail** panel choose a **Background** picture and a **Titles** text file (one title per line).
+Each clip pair gets a random title (every line is used before any repeats). Every clip and teaser then
+opens on a thumbnail for **Show at start of all clips** seconds: the background, the title top-left in
+pink with a black and a white outline, and "TEASER: N" top-right in white with a black and a cyan
+outline, where N counts the teasers made from that timeline. Tick **TEASER: N on full clips too** to put
+the number on full clips as well. Select a clip in the list to give it its own duration (0 = only the
+cover picture). The thumbnail is also embedded as each MP4's cover and saved beside it as a .png.
+
+Install the **Komika Axis** font (title and label) on each computer; otherwise a stand-in is used. **Title
+font** and **Label font** pick other font files. **Preview** opens a sample before rendering.
+These settings are remembered per Resolve project.
+
 ## Export settings
 
 The bundled **Audio Sections High** preset imports automatically when missing.

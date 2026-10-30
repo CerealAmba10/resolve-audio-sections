@@ -144,36 +144,62 @@ def frame_count(path):
         return None
 
 
-def make_teaser(full, teaser, frames, fps, fade):
-    """First `frames` frames of a rendered full clip, with picture and sound fading out at the end."""
-    seconds = float(frames / fps)
-    fade_start = max(0.0, seconds - fade)
-    filters = ['-vf', f'fade=t=out:st={fade_start:.6f}:d={fade:.6f}',
-               '-af', f'afade=t=out:st={fade_start:.6f}:d={fade:.6f}'] if fade > 0 else []
-    args = [tool('ffmpeg'), '-hide_banner', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
-            '-i', str(full), '-frames:v', str(frames), '-t', f'{seconds:.6f}', *filters,
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', '-n', str(teaser)]
-    result = run(args, timeout=3600)
-    if result.returncode:
-        raise ValueError(f'Could not make {Path(teaser).name}:\n{result.stderr[-800:]}')
+def video_size(path):
+    result = run([tool('ffprobe'), '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height',
+                  '-of', 'csv=p=0', str(path)], timeout=60)
+    width, height = result.stdout.strip().splitlines()[0].split(',')[:2]
+    return int(width), int(height)
 
 
-def fade_out(path, frames, fps, fade):
-    """Fade a rendered clip's last `fade` seconds of picture and sound to black and silence, in place."""
-    path = Path(path)
-    seconds = float(frames / fps)
+def encode(source, target, fps, frames=None, fade=0.0, thumb=None, thumb_seconds=0.0):
+    """Re-encode (optionally only the first `frames` frames) with: the thumbnail picture shown for the first
+    `thumb_seconds` (sound keeps playing), a fade-out over the last `fade` seconds, and the thumbnail as the
+    MP4 cover image. `thumb` must be a picture at the video's size."""
+    seconds = float((frames or frame_count(source) or 0) / fps)
+    chain, current = [], '[0:v]'
+    if thumb and thumb_seconds > 0:
+        chain.append(f"{current}[1:v]overlay=0:0:enable='lt(t,{thumb_seconds:.6f})'[shown]")
+        current = '[shown]'
     start = max(0.0, seconds - fade)
-    temporary = path.with_name(path.stem + '.fading.mp4')
+    chain.append(f'{current}' + (f'fade=t=out:st={start:.6f}:d={fade:.6f}' if fade > 0 else 'null') + '[v]')
     args = [tool('ffmpeg'), '-hide_banner', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe', '-y',
-            '-i', str(path), '-vf', f'fade=t=out:st={start:.6f}:d={fade:.6f}', '-af', f'afade=t=out:st={start:.6f}:d={fade:.6f}',
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', str(temporary)]
-    result = run(args, timeout=3600)
+            '-i', str(source), *(['-i', str(thumb)] if thumb else []), '-filter_complex', ';'.join(chain),
+            '-map', '[v]', '-map', '0:a?', *(['-af', f'afade=t=out:st={start:.6f}:d={fade:.6f}'] if fade > 0 else []),
+            *(['-frames:v:0', str(frames), '-t', f'{seconds:.6f}'] if frames else []),
+            '-c:v:0', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '320k', '-ar', '48000']
+    if thumb:
+        args += ['-map', '1:v', '-c:v:1', 'mjpeg', '-q:v:1', '2', '-disposition:v:1', 'attached_pic']
+    result = run(args + ['-movflags', '+faststart', str(target)], timeout=3600)
     if result.returncode:
-        temporary.unlink(missing_ok=True)
-        raise ValueError(f'Could not fade out {path.name}:\n{result.stderr[-800:]}')
-    temporary.replace(path)    # only replace the render once the faded copy is complete
+        Path(target).unlink(missing_ok=True)
+        raise ValueError(f'Could not make {Path(target).name}:\n{result.stderr[-800:]}')
+
+
+def make_teaser(full, teaser, frames, fps, fade, thumb=None, thumb_seconds=0.0):
+    """First `frames` frames of a rendered full clip, fading out at the end, with the thumbnail at the start."""
+    if Path(teaser).exists():
+        raise ValueError(f'{Path(teaser).name} already exists.')
+    encode(full, teaser, fps, frames, fade, thumb, thumb_seconds)
+
+
+def finish_full(path, frames, fps, fade=0.0, thumb=None, thumb_seconds=0.0):
+    """Apply the fade-out and thumbnail to a rendered full clip in place. Without a fade or a shown thumbnail
+    the picture is untouched: the cover image is just added (no re-encode)."""
+    path = Path(path)
+    if not (fade > 0 or thumb):
+        return
+    temporary = path.with_name(path.stem + '.finishing.mp4')
+    if fade > 0 or thumb_seconds > 0:
+        encode(path, temporary, fps, None, fade, thumb, thumb_seconds)
+    else:
+        result = run([tool('ffmpeg'), '-hide_banner', '-nostdin', '-v', 'error', '-y', '-i', str(path), '-i', str(thumb),
+                      '-map', '0:v:0', '-map', '0:a?', '-map', '1:v', '-c', 'copy', '-c:v:1', 'mjpeg', '-q:v:1', '2',
+                      '-disposition:v:1', 'attached_pic', '-movflags', '+faststart', str(temporary)], timeout=3600)
+        if result.returncode:
+            temporary.unlink(missing_ok=True)
+            raise ValueError(f'Could not add the thumbnail to {path.name}:\n{result.stderr[-800:]}')
+    temporary.replace(path)    # only replace the render once the finished copy is complete
 
 
 STILL_TYPES = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp', '.gif', '.psd', '.exr', '.dpx', '.tga', '.heic'}
