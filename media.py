@@ -136,12 +136,15 @@ def track_envelope(track, timeline, cancel=None, progress=lambda fraction: None)
 
 
 def frame_count(path):
-    result = run([tool('ffprobe'), '-v', 'error', '-select_streams', 'v:0', '-show_entries',
-                  'stream=nb_frames', '-of', 'default=nw=1:nk=1', str(path)], timeout=60)
-    try:
-        return int(result.stdout.strip())
-    except ValueError:
-        return None
+    """Video frames in a file: from its header, else counted packet by packet (some MP4s leave it out)."""
+    for entries in (['-show_entries', 'stream=nb_frames'], ['-count_packets', '-show_entries', 'stream=nb_read_packets']):
+        result = run([tool('ffprobe'), '-v', 'error', '-select_streams', 'v:0', *entries, '-of', 'default=nw=1:nk=1',
+                      str(path)], timeout=600)
+        try:
+            return int(result.stdout.strip().splitlines()[0])
+        except (ValueError, IndexError):
+            continue
+    return None
 
 
 def video_size(path):
@@ -151,11 +154,16 @@ def video_size(path):
     return int(width), int(height)
 
 
-def encode(source, target, fps, frames=None, fade=0.0, thumb=None, thumb_seconds=0.0):
+def encode(source, target, fps, frames=None, fade=0.0, thumb=None, thumb_seconds=0.0, total=None):
     """Re-encode (optionally only the first `frames` frames) with: the thumbnail picture shown for the first
     `thumb_seconds` (sound keeps playing), a fade-out over the last `fade` seconds, and the thumbnail as the
     MP4 cover image. `thumb` must be a picture at the video's size."""
-    seconds = float((frames or frame_count(source) or 0) / fps)
+    # The fade-out starts `fade` before the end, so the length must be right: the frames kept, else the clip's
+    # known length (`total`), else counted from the file.
+    length = frames or total or frame_count(source)
+    if fade > 0 and not length:
+        raise ValueError(f'Could not tell how long {Path(source).name} is, so its fade-out was not applied.')
+    seconds = float((length or 0) / fps)
     chain, current = [], '[0:v]'
     if thumb and thumb_seconds > 0:
         chain.append(f"{current}[1:v]overlay=0:0:enable='lt(t,{thumb_seconds:.6f})'[shown]")
@@ -191,7 +199,7 @@ def finish_full(path, frames, fps, fade=0.0, thumb=None, thumb_seconds=0.0):
         return
     temporary = path.with_name(path.stem + '.finishing.mp4')
     if fade > 0 or thumb_seconds > 0:
-        encode(path, temporary, fps, None, fade, thumb, thumb_seconds)
+        encode(path, temporary, fps, None, fade, thumb, thumb_seconds, total=frames)
     else:
         result = run([tool('ffmpeg'), '-hide_banner', '-nostdin', '-v', 'error', '-y', '-i', str(path), '-i', str(thumb),
                       '-map', '0:v:0', '-map', '0:a?', '-map', '1:v', '-c', 'copy', '-c:v:1', 'mjpeg', '-q:v:1', '2',

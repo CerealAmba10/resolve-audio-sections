@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.15
+
+- Fix full clips going dark right after the thumbnail when a clip fade-out was set: the fade started at the
+  beginning whenever the file did not record its frame count. Frame counts now fall back to counting.
+- Thumbnail .png files are only saved beside the videos when Save as .png is ticked (off by default);
+  videos still open on the thumbnail and carry it as their cover.
+
 ## 1.14
 
 - Edit thumbnails button opens the layout editor without rendering; titles and layouts set there stay

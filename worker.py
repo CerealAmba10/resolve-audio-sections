@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import sys
 import threading
 import queue
@@ -112,19 +113,29 @@ def pieces_of(timeline):
 
 def finish_clip(batch, job):
     """Cut one teaser from its rendered full clip, then finish the clip (fade-out, thumbnail). Returns a warning or None.
-    With a thumbnail, both files open on it for the clip's chosen seconds, get it as their cover, and it is saved
-    beside them as a .png; the teaser shows "TEASER: N", the full clip only if asked."""
+    With a thumbnail, both files open on it for the clip's chosen seconds and get it as their cover (saved beside them
+    as .png only if asked); the teaser shows "TEASER: N", the full clip only if asked."""
     fps, output = Fraction(batch['fps']), Path(batch['output'])
     full = output / (job['name'] + '.mp4')
     if not full.is_file():
         raise ValueError(f'Resolve did not produce {full.name}.')
     frames = frame_count(full)
-    teaser_thumb = full_thumb = None
     thumb, seconds = batch.get('thumb'), job.get('thumb_seconds', 0)
+    # The thumbnail pictures are kept beside the videos only if asked; otherwise they only feed the encodes.
+    folder = Path(tempfile.mkdtemp(prefix='audio-sections-thumbs-')) if thumb and not thumb.get('save_png') else output
+    try:
+        return _finish_clip(batch, job, full, frames, fps, output, thumb, seconds, folder)
+    finally:
+        if folder != output:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def _finish_clip(batch, job, full, frames, fps, output, thumb, seconds, folder):
+    teaser_thumb = full_thumb = None
     if thumb:
         width, height = video_size(full)
         label, layout = f"TEASER: {job['teaser_index']}", job.get('layout') or thumb.get('layout')
-        teaser_thumb, full_thumb = output / (job['teaser'] + '.png'), output / (job['name'] + '.png')
+        teaser_thumb, full_thumb = folder / (job['teaser'] + '.png'), folder / (job['name'] + '.png')
         fonts = dict(font_path=thumb.get('title_font') or None, label_font=thumb.get('label_font') or None,
                      layout=layout, logo=thumb.get('logo') or None)
         render_thumbnail(thumb['background'], job.get('title', ''), label, width, height, **fonts).save(teaser_thumb)
@@ -340,7 +351,8 @@ class Worker:
             remembered.update(thumb_background=thumb['background'], thumb_titles=thumb['titles'],
                               thumb_seconds=thumb['seconds'], thumb_full_label=thumb['full_label'],
                               title_font=thumb.get('title_font', ''), label_font=thumb.get('label_font', ''),
-                              thumb_logo=thumb.get('logo', ''), thumb_layout=thumb.get('layout'))
+                              thumb_logo=thumb.get('logo', ''), thumb_layout=thumb.get('layout'),
+                              thumb_save_png=thumb.get('save_png', False))
         try:
             self.settings_file.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
         except OSError:

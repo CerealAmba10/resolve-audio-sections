@@ -114,7 +114,8 @@ opens on a thumbnail for **Show at start of all clips** seconds: the background,
 pink with a black and a white outline, and "TEASER: N" top-right in white with a black and a cyan
 outline, where N counts the teasers made from that timeline. Tick **TEASER: N on full clips too** to put
 the number on full clips as well. Select a clip in the list to give it its own duration (0 = only the
-cover picture). The thumbnail is also embedded as each MP4's cover and saved beside it as a .png.
+cover picture). The thumbnail is also embedded as each MP4's cover; tick **Save as .png** to keep the
+pictures beside the videos too.
 
 Add a **Logo** picture and **Extra text** of up to three lines (Impact, white with a black outline) if
 you like.

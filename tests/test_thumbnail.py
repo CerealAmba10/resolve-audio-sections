@@ -91,5 +91,23 @@ class ThumbnailTest(unittest.TestCase):
         self.assertIn('mjpeg,1', streams)                             # and it is the cover image
 
 
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'needs ffmpeg on PATH')
+    def test_full_clip_with_thumbnail_fades_only_at_its_end(self):
+        clip = self.folder / 'no count.mkv'                    # Matroska keeps no frame count in its header
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=white:s=320x180:r=24:d=6',
+                        '-c:v', 'libx264', str(clip)], check=True)
+        self.assertEqual(media.frame_count(clip), 144)
+        thumb = self.folder / 'thumb dark.png'
+        Image.new('RGB', (320, 180), (0, 0, 0)).save(thumb)
+        media.finish_full(clip, None, Fraction(24), 1.0, thumb, 1.0)
+
+        def luma(at):
+            raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(at), '-i', str(clip), '-map', '0:v:0', '-frames:v', '1',
+                                  '-vf', 'scale=8:8,format=gray', '-f', 'rawvideo', '-'], capture_output=True).stdout
+            return sum(raw) / len(raw)
+        self.assertLess(luma(0.5), 30)          # the (black) thumbnail
+        self.assertGreater(luma(3.0), 200)      # the clip itself, not faded
+        self.assertLess(luma(5.95), 60)         # fading out at the very end
+
 if __name__ == '__main__':
     unittest.main()

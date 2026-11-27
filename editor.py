@@ -248,8 +248,11 @@ class Editor:
         self.extra_text_box = lines
         ttk.Label(panel, text='Show at start of all clips (s)').grid(row=6, column=0, columnspan=2, sticky='w')
         ttk.Spinbox(panel, textvariable=self.thumb_seconds, from_=0, to=60, increment=0.5, width=6).grid(row=6, column=2)
-        ttk.Checkbutton(panel, text='TEASER: N on full clips too', variable=self.thumb_full_label).grid(
-            row=7, column=0, columnspan=3, sticky='w')
+        self.thumb_save_png = tk.BooleanVar(value=self.defaults.get('thumb_save_png', False))
+        toggles = ttk.Frame(panel)
+        toggles.grid(row=7, column=0, columnspan=3, sticky='w')
+        ttk.Checkbutton(toggles, text='TEASER on full clips', variable=self.thumb_full_label).pack(side='left')
+        ttk.Checkbutton(toggles, text='Save as .png', variable=self.thumb_save_png).pack(side='left', padx=(10, 0))
         self.clip_thumb = tk.DoubleVar(value=1.0)
         self.clip_thumb_label = ttk.Label(panel, text='Selected clip (s)', foreground=COLORS['dim'])
         self.teaser_next = tk.IntVar(value=self.defaults.get('teaser_next', 1))
@@ -321,7 +324,8 @@ class Editor:
         if not background:
             return None
         return dict(background=background, titles=self.thumb_titles.get().strip(), seconds=self.thumb_default(),
-                    full_label=bool(self.thumb_full_label.get()), title_font=self.title_font.get().strip(),
+                    full_label=bool(self.thumb_full_label.get()), save_png=bool(self.thumb_save_png.get()),
+                    title_font=self.title_font.get().strip(),
                     label_font=self.label_font.get().strip(), logo=self.thumb_logo.get().strip(),
                     layout=layout_with(self.thumb_layout, text=dict(value=self.extra_text.get())))
 
