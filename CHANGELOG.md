@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.17
+
+- The whole-timeline clip no longer shows a TEASER label on its thumbnails and does not take a TEASER
+  number. Type a label for it in the thumbnail editor if you want one.
+
 ## 1.16
 
 - Also render the whole timeline as one clip: an option under Output adds `name full.mp4` and

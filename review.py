@@ -139,7 +139,8 @@ class ThumbnailReview:
         self.redraw([self.current] if own else [n for n, job in enumerate(self.jobs) if not job.get('layout')])
 
     def label_of(self, n):
-        return self.jobs[n].get('label') or f"TEASER: {self.jobs[n]['teaser_index']}"
+        job = self.jobs[n]
+        return job.get('label') or ('' if job.get('whole') else f"TEASER: {job['teaser_index']}")
 
     def type_text(self):
         """The text box edits the selected element: title and TEASER label per thumbnail, extra text by scope."""
@@ -240,7 +241,7 @@ class ThumbnailReview:
         tile, caption = self.tiles[n]
         tile.configure(image=self.tile_images[n], width=TILE_W, height=TILE_H)
         job = self.jobs[n]
-        caption.configure(text=f"{job['name']}  ·  {self.label_of(n)}" + ('  ·  own layout' if job.get('layout') else ''))
+        caption.configure(text='  ·  '.join(filter(None, (job['name'], self.label_of(n), job.get('layout') and 'own layout'))))
         self.win.after(1, self.draw_tiles)
 
     def redraw(self, numbers):

@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 REPO = 'CerealAmba10/resolve-audio-sections'
-VERSION = '1.16'          # bump for every published build; the tag is "v" + this
+VERSION = '1.17'          # bump for every published build; the tag is "v" + this
 ASSET = 'AudioSectionsSetup.exe'
 MAX_BYTES = 200 * 1024 * 1024
 

@@ -696,7 +696,7 @@ class Editor:
             else:
                 first, last = 0, self.timeline['end'] - self.timeline['start'] - 1
             base = self.target['start'] if self.target else self.timeline['start']
-            jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first, mark_out=base + last,
+            jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first, mark_out=base + last, whole=True,
                              frames=last - first + 1, first=first, last=last, thumb_seconds=self.thumb_default(),
                              teaser_frames=min(teaser_frames, last - first + 1), start=0.0, end=self.duration))
             sections.append(self.whole_section)
@@ -721,7 +721,7 @@ class Editor:
             for n, (job, section) in enumerate(zip(jobs, sections)):
                 if 'thumb_title' not in section:
                     section['thumb_title'] = next(dealt, '')
-                job.update(title=section['thumb_title'], teaser_index=self.next_teaser() + n)
+                job.update(title=section['thumb_title'], teaser_index=None if job.get('whole') else self.next_teaser() + n)
                 if section.get('thumb_layout'):
                     job['layout'] = section['thumb_layout']
                 if section.get('thumb_label'):

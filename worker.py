@@ -134,12 +134,13 @@ def _finish_clip(batch, job, full, frames, fps, output, thumb, seconds, folder):
     teaser_thumb = full_thumb = None
     if thumb:
         width, height = video_size(full)
-        label, layout = job.get('label') or f"TEASER: {job['teaser_index']}", job.get('layout') or thumb.get('layout')
+        label = job.get('label') or ('' if job.get('whole') else f"TEASER: {job['teaser_index']}")
+        layout = job.get('layout') or thumb.get('layout')
         teaser_thumb, full_thumb = folder / (job['teaser'] + '.png'), folder / (job['name'] + '.png')
         fonts = dict(font_path=thumb.get('title_font') or None, label_font=thumb.get('label_font') or None,
                      layout=layout, logo=thumb.get('logo') or None)
         render_thumbnail(thumb['background'], job.get('title', ''), label, width, height, **fonts).save(teaser_thumb)
-        render_thumbnail(thumb['background'], job.get('title', ''), label if thumb.get('full_label') else '',
+        render_thumbnail(thumb['background'], job.get('title', ''), label if thumb.get('full_label') or job.get('whole') else '',
                          width, height, **fonts).save(full_thumb)
     make_teaser(full, output / (job['teaser'] + '.mp4'), job.get('teaser_frames', batch['teaser_frames']), fps,
                 batch['fade'], teaser_thumb, seconds)
@@ -367,8 +368,10 @@ class Worker:
             if not all('teaser_index' in job for job in batch['jobs']):     # reviewed jobs already carry them
                 titles = deal_titles(load_titles(batch['thumb']['titles']), len(batch['jobs'])) if batch['thumb']['titles'] else []
                 for n, job in enumerate(batch['jobs']):
-                    job.update(teaser_index=counts.get(key, 0) + n + 1, title=titles[n] if n < len(titles) else '')
-            counts[key] = max(job['teaser_index'] for job in batch['jobs'])
+                    job.update(teaser_index=None if job.get('whole') else counts.get(key, 0) + n + 1,
+                               title=titles[n] if n < len(titles) else '')
+            counts[key] = max((job['teaser_index'] for job in batch['jobs'] if not job.get('whole')),
+                              default=counts.get(key, 0))
         self.remember_project(batch['stem'], batch['output'], batch.get('thumb'))     # also saves the other settings
         batches = self.home / 'batches'
         batches.mkdir(exist_ok=True)
