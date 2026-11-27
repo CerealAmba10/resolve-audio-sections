@@ -6,7 +6,9 @@
   title and TEASER number. Drag the title, TEASER label, logo and extra text in a large preview and set
   each one's size, tilt and visibility, for all thumbnails or for one; Mirror flips one thumbnail left to
   right, Reset returns it to the batch layout. The batch layout is remembered per project.
-- Logo picture and an extra text line (Impact, white with a black outline) on thumbnails.
+- Logo picture and extra text of up to three lines (Impact, white with a thin black outline) on thumbnails.
+  Elements are kept inside the frame.
+- Releases run only the Audio Sections tests.
 - Next TEASER # in the Thumbnail panel shows where numbering continues, with Reset to 1.
 
 ## 1.12

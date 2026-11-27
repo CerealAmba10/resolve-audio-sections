@@ -57,6 +57,15 @@ class ThumbnailTest(unittest.TestCase):
         hidden = thumbnail.layout_with(layout, logo=dict(visible=False))
         self.assertNotIn('logo', thumbnail.compose(self.background, 'Hello', '', 640, 360, hidden, logo)[1])
 
+    def test_extra_text_takes_three_lines_and_stays_in_frame(self):
+        def text_box(value):
+            layout = thumbnail.layout_with(text=dict(value=value, x=0.2, y=0.95))
+            return thumbnail.compose(self.background, '', '', 640, 360, layout)[1]['text']
+        one, three, four = text_box('GEMINI'), text_box('DOMI\nGEMINI\nANAL'), text_box('DOMI\nGEMINI\nANAL\nMORE')
+        self.assertGreater(three[3] - three[1], 2.5 * (one[3] - one[1]) * 0.8)    # three stacked lines
+        self.assertEqual(three, four)                                             # a fourth line is ignored
+        self.assertLessEqual(three[3], 360 + (three[3] - three[1]) * 0.2)        # nudged up into the frame
+
     @unittest.skipUnless(shutil.which('ffmpeg'), 'needs ffmpeg on PATH')
     def test_teaser_opens_on_thumbnail_then_shows_the_clip(self):
         full = self.folder / 'full.mp4'

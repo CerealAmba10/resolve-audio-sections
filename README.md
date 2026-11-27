@@ -116,7 +116,8 @@ outline, where N counts the teasers made from that timeline. Tick **TEASER: N on
 the number on full clips as well. Select a clip in the list to give it its own duration (0 = only the
 cover picture). The thumbnail is also embedded as each MP4's cover and saved beside it as a .png.
 
-Add a **Logo** picture and an **Extra text** line (Impact, white with a black outline) if you like.
+Add a **Logo** picture and **Extra text** of up to three lines (Impact, white with a black outline) if
+you like.
 
 When you click Render, a review window shows every thumbnail as it will be made. Pick a thumbnail on the
 left; in the large preview drag the title, TEASER label, logo or extra text to move it, and set its size,

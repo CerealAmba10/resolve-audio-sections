@@ -238,8 +238,12 @@ class Editor:
             ttk.Entry(panel, textvariable=var, width=22).grid(row=row, column=1, sticky='ew', pady=1)
             ttk.Button(panel, text='…', width=3, command=lambda v=var, t=types: self.pick_file(v, t)).grid(
                 row=row, column=2, padx=(4, 0))
-        ttk.Label(panel, text='Extra text').grid(row=5, column=0, sticky='w')
-        ttk.Entry(panel, textvariable=self.extra_text, width=22).grid(row=5, column=1, columnspan=2, sticky='ew', pady=1)
+        ttk.Label(panel, text='Extra text\n(up to 3 lines)').grid(row=5, column=0, sticky='nw')
+        lines = tk.Text(panel, width=22, height=3, font=('Segoe UI', 9), wrap='none')
+        lines.grid(row=5, column=1, columnspan=2, sticky='ew', pady=1)
+        lines.insert('1.0', self.extra_text.get())
+        lines.bind('<KeyRelease>', lambda e: self.extra_text.set(lines.get('1.0', 'end-1c')))
+        self.extra_text_box = lines
         ttk.Label(panel, text='Show at start of all clips (s)').grid(row=6, column=0, columnspan=2, sticky='w')
         ttk.Spinbox(panel, textvariable=self.thumb_seconds, from_=0, to=60, increment=0.5, width=6).grid(row=6, column=2)
         ttk.Checkbutton(panel, text='TEASER: N on full clips too', variable=self.thumb_full_label).grid(
@@ -689,6 +693,8 @@ class Editor:
         self.thumb_layout = thumb['layout']
         self.quiet = True
         self.extra_text.set(thumb['layout']['text'].get('value', ''))
+        self.extra_text_box.delete('1.0', 'end')
+        self.extra_text_box.insert('1.0', self.extra_text.get())
         self.quiet = False
         self.win.deiconify()
 

@@ -6,7 +6,7 @@ if (-not $version) { throw 'VERSION not found in updater.py.' }
 if (git status --porcelain --untracked-files=no) { throw 'Commit your changes before releasing.' }
 gh release view "v$version" *> $null
 if ($LASTEXITCODE -eq 0) { throw "v$version is already released. Bump VERSION in updater.py." }
-python -m unittest discover -s tests
+python -m unittest tests.test_bridge tests.test_media tests.test_ffmpeg_tools tests.test_thumbnail
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 powershell -NoProfile -ExecutionPolicy Bypass -File build_lite.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }

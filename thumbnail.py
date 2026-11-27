@@ -151,6 +151,7 @@ DEFAULT_LAYOUT = {
     'text': dict(x=0.17, y=0.87, size=1.0, angle=0.0, visible=True, value=''),
 }
 ELEMENTS = tuple(DEFAULT_LAYOUT)
+MAX_TEXT_LINES = 3
 _blocks, _backgrounds = {}, {}
 
 
@@ -208,7 +209,8 @@ def element_block(kind, spec, content, width, height, fonts):
     elif kind == 'text' and content:
         size = round(height * 0.11 * spec['size']) * 2
         impact = installed(('impact.ttf',)) or label_font
-        block = styled([content], ImageFont.truetype(impact, size), size, WHITE, (0, 0, 0), bold=0, outer=0.06,
+        lines = [line for line in content.splitlines() if line.strip()][:MAX_TEXT_LINES] or [content]
+        block = styled(lines, ImageFont.truetype(impact, size), size, WHITE, (0, 0, 0), spacing=1.05, bold=0, outer=0.06,
                        glow=0.04, glow_strength=0.35, rim_alpha=0)
     elif kind == 'logo' and content:
         picture = Image.open(content).convert('RGBA')
@@ -239,6 +241,10 @@ def compose(background, title, label, width, height, layout=None, logo=None, fon
         block = spec['visible'] and element_block(kind, spec, contents[kind], width, height, fonts)
         if block:
             left, top = round(spec['x'] * width - block.width / 2), round(spec['y'] * height - block.height / 2)
+            # Nudge back inside the frame if the visible part would spill over an edge (three lines of text, a big logo).
+            x0, y0, x1, y1 = block.getbbox() or (0, 0, block.width, block.height)
+            left = min(max(left, -x0), width - x1)
+            top = min(max(top, -y0), height - y1)
             frame.paste(block, (left, top), block)
             boxes[kind] = (left, top, left + block.width, top + block.height)
     return frame, boxes
