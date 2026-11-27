@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.14
+
+- Edit thumbnails button opens the layout editor without rendering; titles and layouts set there stay
+  with their clips and are used by Render.
+- The clip list shows each clip's TEASER number and updates when Next TEASER # changes or is reset.
+- Version and Check for updates moved to the bottom-left corner of the Audio Sections window.
+
 ## 1.13
 
 - Thumbnail layout editor: with thumbnails on, Render first opens a review of every thumbnail with its real

@@ -152,17 +152,14 @@ class Editor:
         ttk.Label(hint, foreground=COLORS['dim'], text='Wheel: zoom · drag: scroll · drag clip edges to trim · '
                   'drag the orange line to set a track\'s silence level · click a clip to select').pack(side='left')
         ttk.Button(hint, text='Show all', command=self.fit).pack(side='right')
-        if self.check_updates:
-            ttk.Button(hint, text='Check for updates', command=self.check_updates).pack(side='right', padx=(0, 8))
-        ttk.Label(hint, foreground=COLORS['dim'], text=f'Audio Sections {VERSION}').pack(side='right', padx=(0, 8))
 
         bottom = ttk.Frame(outer)
         bottom.grid(row=4, column=0, sticky='nsew')
         bottom.columnconfigure(0, weight=1)
         self.table = ttk.Treeview(bottom, columns=('use', 'name', 'start', 'end', 'length', 'thumb'), show='headings',
                                   height=7, selectmode='browse')
-        for column, label, width in [('use', 'Render', 60), ('name', 'Name', 200), ('start', 'Start', 95),
-                                     ('end', 'End', 95), ('length', 'Length', 80), ('thumb', 'Thumbnail', 110)]:
+        for column, label, width in [('use', 'Render', 60), ('name', 'Name', 180), ('start', 'Start', 95),
+                                     ('end', 'End', 95), ('length', 'Length', 80), ('thumb', 'Thumbnail', 150)]:
             self.table.heading(column, text=label)
             self.table.column(column, width=width, anchor='w')
         self.table.grid(row=0, column=0, sticky='nsew')
@@ -202,7 +199,12 @@ class Editor:
         self.render_button = ttk.Button(buttons, text='Render', command=self.render, state='disabled')
         self.render_button.pack(side='left', padx=(8, 0))
         self.status = tk.StringVar(value='')
-        ttk.Label(outer, textvariable=self.status, foreground=COLORS['dim']).grid(row=5, column=0, sticky='w', pady=(6, 0))
+        footer = ttk.Frame(outer)
+        footer.grid(row=5, column=0, sticky='ew', pady=(6, 0))
+        ttk.Label(footer, foreground=COLORS['dim'], text=f'Audio Sections {VERSION}').pack(side='left')
+        if self.check_updates:
+            ttk.Button(footer, text='Check for updates', command=self.check_updates).pack(side='left', padx=(8, 16))
+        ttk.Label(footer, textvariable=self.status, foreground=COLORS['dim']).pack(side='left')
         if self.loaded is not None:
             self.status.set(f'Showing the {len(self.loaded)} pieces of this cuts timeline as they are in Resolve. '
                             'Change any setting to cut automatically instead.')
@@ -251,6 +253,7 @@ class Editor:
         self.clip_thumb = tk.DoubleVar(value=1.0)
         self.clip_thumb_label = ttk.Label(panel, text='Selected clip (s)', foreground=COLORS['dim'])
         self.teaser_next = tk.IntVar(value=self.defaults.get('teaser_next', 1))
+        self.teaser_next.trace_add('write', lambda *a: self.refresh_table())
         ttk.Label(panel, text='Next TEASER #').grid(row=8, column=0, sticky='w')
         counter = ttk.Frame(panel)
         counter.grid(row=8, column=1, columnspan=2, sticky='w', pady=1)
@@ -264,7 +267,8 @@ class Editor:
         actions.grid(row=10, column=0, columnspan=3, sticky='ew', pady=(4, 0))
         self.clip_thumb_reset = ttk.Button(actions, text='Use all-clips value', state='disabled', command=self.reset_clip_thumb)
         self.clip_thumb_reset.pack(side='left')
-        ttk.Button(actions, text='Preview', command=self.preview_thumbnail).pack(side='right')
+        ttk.Button(actions, text='Edit thumbnails', command=lambda: self.render('thumbnails')).pack(side='right')
+        ttk.Button(actions, text='Preview', command=self.preview_thumbnail).pack(side='right', padx=(0, 6))
         self.clip_thumb.trace_add('write', lambda *a: self.set_clip_thumb())
         for var in (self.thumb_background, self.thumb_titles, self.thumb_seconds):
             var.trace_add('write', lambda *a: self.refresh_table())
@@ -447,6 +451,7 @@ class Editor:
     def refresh_table(self):
         self.table.delete(*self.table.get_children())
         number = self.first_number()
+        teaser_number = self.next_teaser() if hasattr(self, 'teaser_next') else 1
         for i, section in enumerate(self.sections):
             length = section['end'] - section['start']
             name = ''
@@ -458,6 +463,8 @@ class Editor:
             shown = self.clip_thumb_seconds(section)
             thumb = ('—' if not self.thumb_settings() else 'cover only' if shown <= 0 else f'{shown:g} s') + \
                 (' (this clip)' if 'thumb' in section and self.thumb_settings() else '')
+            if self.thumb_settings() and section['use'] and section['keep']:
+                thumb, teaser_number = f'TEASER {teaser_number} · {thumb}', teaser_number + 1
             self.table.insert('', 'end', iid=str(i), values=(use, name, clock(section['start']),
                                                               clock(section['end']), f'{length:.2f} s', thumb),
                               tags=() if section['keep'] else ('short',))
@@ -677,15 +684,33 @@ class Editor:
                           fade=self.setting('fade'), clip_fade=self.setting('clip_fade'))
             threading.Thread(target=self.prepare_stills, args=(clips, teaser_frames, record), daemon=True).start()
             return
+        if action == 'thumbnails' and not thumb:
+            return messagebox.showerror('Thumbnail', 'Choose a background picture first.', parent=self.win)
         if thumb:
-            # Titles and TEASER numbers are fixed now, so the review shows exactly what gets rendered.
+            # Titles and TEASER numbers are fixed now, so the review shows exactly what gets rendered. A clip keeps
+            # the title and its own layout from an earlier Edit thumbnails.
             from thumbnail import deal_titles, load_titles
-            titles = deal_titles(load_titles(thumb['titles']), len(jobs)) if thumb['titles'] else []
-            for n, job in enumerate(jobs):
-                job.update(title=titles[n] if n < len(titles) else '', teaser_index=self.next_teaser() + n)
+            sections = self.included()
+            missing = sum(1 for s in sections if 'thumb_title' not in s)
+            dealt = iter(deal_titles(load_titles(thumb['titles']), missing) if thumb['titles'] and missing else [])
+            for n, (job, section) in enumerate(zip(jobs, sections)):
+                if 'thumb_title' not in section:
+                    section['thumb_title'] = next(dealt, '')
+                job.update(title=section['thumb_title'], teaser_index=self.next_teaser() + n)
+                if section.get('thumb_layout'):
+                    job['layout'] = section['thumb_layout']
+
+            def keep_edits():
+                for job, section in zip(jobs, sections):
+                    section['thumb_title'] = job['title']
+                    section['thumb_layout'] = job.get('layout')
+                self.back_from_review(thumb)
+
             self.win.withdraw()
+            if action == 'thumbnails':
+                return ThumbnailReview(self.win, jobs, thumb, keep_edits, keep_edits, finish_label='Done')
             return ThumbnailReview(self.win, jobs, thumb, lambda: self.send_render(stem, folder, teaser_frames, jobs, thumb),
-                                   lambda: self.back_from_review(thumb))
+                                   keep_edits)
         self.send_render(stem, folder, teaser_frames, jobs, thumb)
 
     def back_from_review(self, thumb):

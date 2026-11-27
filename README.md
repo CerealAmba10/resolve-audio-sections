@@ -14,7 +14,7 @@ silences in the tracks you choose. Offline, for **Windows, Resolve Free 21.1.1**
 6 hours. When a newer version is out, a small window offers **Update**. Click it; the new
 version is downloaded, checked against the SHA-256 GitHub publishes, and installed in a few
 seconds. Close the window to update later. Updates are never offered while a clip job is running.
-To check right away, click **Check for updates** at the bottom of the Audio Sections window.
+To check right away, click **Check for updates** in the bottom-left corner of the Audio Sections window.
 
 No Python installation or account is needed. Setup reuses an existing FFmpeg and
 FFprobe pair from PATH/common install folders. If none is available, it downloads
@@ -119,7 +119,8 @@ cover picture). The thumbnail is also embedded as each MP4's cover and saved bes
 Add a **Logo** picture and **Extra text** of up to three lines (Impact, white with a black outline) if
 you like.
 
-When you click Render, a review window shows every thumbnail as it will be made. Pick a thumbnail on the
+Click **Edit thumbnails** to lay them out at any time, or just click Render: a review window
+shows every thumbnail as it will be made. Pick a thumbnail on the
 left; in the large preview drag the title, TEASER label, logo or extra text to move it, and set its size,
 tilt and visibility on the right. **All thumbnails** changes the batch layout; **This thumbnail only**
 adjusts one outlier (**Mirror this thumbnail** flips one left to right, **Reset** returns it to the

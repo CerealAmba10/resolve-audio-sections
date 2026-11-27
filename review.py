@@ -13,7 +13,7 @@ NAMES = (('title', 'Title'), ('label', 'TEASER'), ('logo', 'Logo'), ('text', 'Ex
 
 
 class ThumbnailReview:
-    def __init__(self, master, jobs, thumb, on_render, on_back):
+    def __init__(self, master, jobs, thumb, on_render, on_back, finish_label=None):
         """`jobs` carry name, title and teaser_index; a job's own layout goes in job['layout'], the batch layout in
         thumb['layout']. Both are changed in place."""
         self.jobs, self.thumb, self.on_render, self.on_back = jobs, thumb, on_render, on_back
@@ -98,7 +98,7 @@ class ThumbnailReview:
         bottom = ttk.Frame(self.win, padding=(14, 8))
         bottom.pack(fill='x', side='bottom')
         ttk.Button(bottom, text='Back', command=self.back).pack(side='left')
-        ttk.Button(bottom, text=f'Render {len(jobs)} clips', command=self.render).pack(side='right')
+        ttk.Button(bottom, text=finish_label or f'Render {len(jobs)} clips', command=self.render).pack(side='right')
         self.select(0)
         self.filling = True
         self.win.after(10, self.draw_tiles)
