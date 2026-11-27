@@ -184,10 +184,14 @@ class Editor:
         ttk.Button(out, text='…', width=3, command=self.browse).grid(row=1, column=2, padx=(4, 0))
         self.stem.trace_add('write', lambda *a: self.refresh_table())
         self.folder.trace_add('write', lambda *a: self.refresh_table())
+        self.whole = tk.BooleanVar(value=self.settings.get('whole', False))
+        self.whole_section = {}
+        ttk.Checkbutton(out, text='Also render the whole timeline as one clip', variable=self.whole,
+                        command=self.refresh_table).grid(row=2, column=0, columnspan=3, sticky='w', pady=(6, 0))
         self.summary = tk.StringVar(value='Scanning audio…')
-        ttk.Label(out, textvariable=self.summary, wraplength=300).grid(row=2, column=0, columnspan=3, sticky='w', pady=(8, 8))
+        ttk.Label(out, textvariable=self.summary, wraplength=300).grid(row=3, column=0, columnspan=3, sticky='w', pady=(8, 8))
         buttons = ttk.Frame(out)
-        buttons.grid(row=3, column=0, columnspan=3, sticky='e')
+        buttons.grid(row=4, column=0, columnspan=3, sticky='e')
         ttk.Button(buttons, text='Cancel', command=self.close).pack(side='left')
         self.cuts_button = ttk.Button(buttons, text='Make cuts in Resolve', state='disabled',
                                       command=lambda: self.render('cuts'))
@@ -477,9 +481,11 @@ class Editor:
         chosen = self.included()
         total = sum(s['end'] - s['start'] for s in chosen)
         plural = '' if len(chosen) == 1 else 's'
-        self.summary.set(f'{len(chosen)} clip{plural} + {len(chosen)} teaser{plural} · {clock(total)} total. '
+        whole = f' Plus "{self.stem.get().strip()} full" (+ fullT), the whole timeline.' if self.whole.get() else ''
+        self.summary.set(f'{len(chosen)} clip{plural} + {len(chosen)} teaser{plural} · {clock(total)} total.{whole} '
                          f'Double-click a row to skip or include it.' if self.sections else 'No sound found on the primary tracks yet.')
-        self.render_button.configure(text=f'Render {len(chosen)} clip{plural}' if chosen else 'Render')
+        count = len(chosen) + self.whole.get()
+        self.render_button.configure(text=f"Render {count} clip{'' if count == 1 else 's'}" if count else 'Render')
 
     def toggle(self):
         if self.selected is not None and self.sections[self.selected]['keep']:
@@ -678,6 +684,22 @@ class Editor:
                              teaser_frames=s.get('teaser_frames') or min(teaser_frames, last - first + 1),
                              start=s['start'], end=s['end']))
             number += 1
+        sections = self.included()
+        if self.whole.get() and action != 'cuts':
+            name, extra = f'{stem} full', 1
+            while any((folder / (output + '.mp4')).exists() for output in (name, name + 'T')):
+                extra += 1
+                name = f'{stem} full {extra}'
+            if self.target:
+                first = min(p['frames'][0] for p in self.loaded)
+                last = max(p['frames'][1] for p in self.loaded)
+            else:
+                first, last = 0, self.timeline['end'] - self.timeline['start'] - 1
+            base = self.target['start'] if self.target else self.timeline['start']
+            jobs.append(dict(name=name, teaser=name + 'T', mark_in=base + first, mark_out=base + last,
+                             frames=last - first + 1, first=first, last=last, thumb_seconds=self.thumb_default(),
+                             teaser_frames=min(teaser_frames, last - first + 1), start=0.0, end=self.duration))
+            sections.append(self.whole_section)
         if not jobs:
             return
         folder.mkdir(parents=True, exist_ok=True)
@@ -694,7 +716,6 @@ class Editor:
             # Titles and TEASER numbers are fixed now, so the review shows exactly what gets rendered. A clip keeps
             # the title and its own layout from an earlier Edit thumbnails.
             from thumbnail import deal_titles, load_titles
-            sections = self.included()
             missing = sum(1 for s in sections if 'thumb_title' not in s)
             dealt = iter(deal_titles(load_titles(thumb['titles']), missing) if thumb['titles'] and missing else [])
             for n, (job, section) in enumerate(zip(jobs, sections)):
@@ -703,11 +724,14 @@ class Editor:
                 job.update(title=section['thumb_title'], teaser_index=self.next_teaser() + n)
                 if section.get('thumb_layout'):
                     job['layout'] = section['thumb_layout']
+                if section.get('thumb_label'):
+                    job['label'] = section['thumb_label']
 
             def keep_edits():
                 for job, section in zip(jobs, sections):
                     section['thumb_title'] = job['title']
                     section['thumb_layout'] = job.get('layout')
+                    section['thumb_label'] = job.get('label')
                 self.back_from_review(thumb)
 
             self.win.withdraw()
@@ -736,7 +760,8 @@ class Editor:
     def send_render(self, stem, folder, teaser_frames, jobs, thumb):
         roles = dict(self.settings.get('roles', {}))
         roles.update({t['name'] or f"A{t['index']}": t['role'].get() for t in self.tracks})
-        self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get())
+        self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get(),
+                             whole=self.whole.get())
         self.cancel.set()
         self.win.destroy()
         self.on_render(dict(stem=stem, output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,

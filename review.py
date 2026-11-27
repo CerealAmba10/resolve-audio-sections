@@ -1,11 +1,12 @@
 """Thumbnail layout editor shown before rendering: drag, size and tilt the title, TEASER label, logo and extra
 text in a large preview, for the whole batch or for one thumbnail at a time."""
+import random
 import tkinter as tk
 from tkinter import ttk
 
 from PIL import ImageTk
 
-from thumbnail import compose, layout_with, mirrored
+from thumbnail import compose, layout_with, load_titles, mirrored
 
 TILE_W, TILE_H = 224, 126
 VIEW_W, VIEW_H = 864, 486
@@ -28,7 +29,7 @@ class ThumbnailReview:
         self.win.lift()
         self.win.focus_force()
         ttk.Label(self.win, padding=(14, 10, 14, 4), text=f'{len(jobs)} thumbnails. Pick one on the left; drag things in '
-                  'the preview to move them, and use the controls on the right for size, tilt and the extra text.').pack(anchor='w')
+                  'the preview to move them, double-click one to change its text, and use the controls on the right for size and tilt.').pack(anchor='w')
         body = ttk.Frame(self.win, padding=(14, 4))
         body.pack(fill='both', expand=True)
 
@@ -60,6 +61,7 @@ class ThumbnailReview:
         self.view.bind('<ButtonPress-1>', self.press)
         self.view.bind('<B1-Motion>', self.move)
         self.view.bind('<ButtonRelease-1>', lambda e: setattr(self, 'drag', None))
+        self.view.bind('<Double-Button-1>', self.edit_text)
 
         side = ttk.Frame(body, width=300)
         side.pack(side='left', fill='y', anchor='n')
@@ -85,12 +87,15 @@ class ThumbnailReview:
         self.angle_text = tk.StringVar()
         ttk.Label(controls, textvariable=self.angle_text).pack(anchor='w', pady=(6, 0))
         ttk.Scale(controls, from_=-45, to=45, variable=self.angle, command=lambda v: self.change(angle=round(float(v), 1))).pack(fill='x')
-        ttk.Label(controls, text='Extra text (up to 3 lines)').pack(anchor='w', pady=(6, 0))
+        self.words_text = tk.StringVar()
+        ttk.Label(controls, textvariable=self.words_text).pack(anchor='w', pady=(6, 0))
         self.words = tk.Text(controls, width=28, height=3, font=('Segoe UI', 9), wrap='none')
         self.words.pack(fill='x')
-        self.words.bind('<KeyRelease>', lambda e: self.change(kind='text', value=self.words.get('1.0', 'end-1c')))
+        self.words.bind('<KeyRelease>', lambda e: self.type_text())
         actions = ttk.Frame(side)
         actions.pack(fill='x', pady=(10, 0))
+        if thumb.get('titles'):
+            ttk.Button(actions, text='New random title', command=self.random_title).pack(fill='x', pady=(0, 4))
         ttk.Button(actions, text='Mirror this thumbnail', command=self.mirror).pack(fill='x')
         self.reset_button = ttk.Button(actions, text='Reset this one to the batch layout', command=self.reset)
         self.reset_button.pack(fill='x', pady=(4, 0))
@@ -109,7 +114,7 @@ class ThumbnailReview:
 
     def picture(self, n, width, height):
         job = self.jobs[n]
-        return compose(self.thumb['background'], job['title'], f"TEASER: {job['teaser_index']}", width, height,
+        return compose(self.thumb['background'], job['title'], self.label_of(n), width, height,
                        self.layout_of(n), self.thumb.get('logo') or None, self.thumb.get('title_font') or None,
                        self.thumb.get('label_font') or None)
 
@@ -132,6 +137,37 @@ class ThumbnailReview:
         self.draw_view()
         own = self.scope.get() == 'one'
         self.redraw([self.current] if own else [n for n, job in enumerate(self.jobs) if not job.get('layout')])
+
+    def label_of(self, n):
+        return self.jobs[n].get('label') or f"TEASER: {self.jobs[n]['teaser_index']}"
+
+    def type_text(self):
+        """The text box edits the selected element: title and TEASER label per thumbnail, extra text by scope."""
+        value, kind = self.words.get('1.0', 'end-1c'), self.kind.get()
+        if self.quiet or kind == 'logo':
+            return
+        if kind == 'text':
+            return self.change(kind='text', value=value)
+        if kind == 'title':
+            self.jobs[self.current]['title'] = ' '.join(value.split())
+        else:
+            self.jobs[self.current]['label'] = ' '.join(value.split())
+        self.draw_view()
+        self.redraw([self.current])
+
+    def random_title(self):
+        titles = load_titles(self.thumb['titles'])
+        if titles:
+            self.jobs[self.current]['title'] = random.choice(titles)
+            self.kind.set('title')
+            self.show_controls()
+            self.redraw([self.current])
+
+    def edit_text(self, event):
+        if self.hit(event) in ('title', 'label', 'text'):
+            self.words.focus_set()
+            self.words.tag_add('sel', '1.0', 'end-1c')
+            self.words.mark_set('insert', 'end-1c')
 
     def mirror(self):
         job = self.jobs[self.current]
@@ -160,8 +196,15 @@ class ThumbnailReview:
             self.visible.set(spec['visible'])
             self.size.set(spec['size'])
             self.angle.set(spec['angle'])
+            kind, job = self.kind.get(), self.jobs[self.current]
+            self.words.configure(state='normal')
             self.words.delete('1.0', 'end')
-            self.words.insert('1.0', self.layout_of(self.current)['text'].get('value', ''))
+            self.words.insert('1.0', {'title': job['title'], 'label': self.label_of(self.current), 'logo': '',
+                                      'text': self.layout_of(self.current)['text'].get('value', '')}[kind])
+            self.words_text.set({'title': 'Title (this thumbnail)', 'label': 'TEASER label (this thumbnail)',
+                                 'logo': 'The logo has no text', 'text': 'Extra text (up to 3 lines)'}[kind])
+            if kind == 'logo':
+                self.words.configure(state='disabled')
             self.quiet = False
         self.size_text.set(f"Size  ×{spec['size']:.2f}")
         self.angle_text.set(f"Tilt  {spec['angle']:+.1f}°")
@@ -197,7 +240,7 @@ class ThumbnailReview:
         tile, caption = self.tiles[n]
         tile.configure(image=self.tile_images[n], width=TILE_W, height=TILE_H)
         job = self.jobs[n]
-        caption.configure(text=f"{job['name']}  ·  TEASER: {job['teaser_index']}" + ('  ·  own layout' if job.get('layout') else ''))
+        caption.configure(text=f"{job['name']}  ·  {self.label_of(n)}" + ('  ·  own layout' if job.get('layout') else ''))
         self.win.after(1, self.draw_tiles)
 
     def redraw(self, numbers):
@@ -207,10 +250,13 @@ class ThumbnailReview:
             self.win.after(150, self.draw_tiles)
 
     # ---------- dragging ----------
+    def hit(self, event):
+        return next((kind for kind in ('label', 'title', 'text', 'logo')
+                     if kind in self.boxes and self.boxes[kind][0] <= event.x <= self.boxes[kind][2]
+                     and self.boxes[kind][1] <= event.y <= self.boxes[kind][3]), None)
+
     def press(self, event):
-        hit = next((kind for kind in ('label', 'title', 'text', 'logo')
-                    if kind in self.boxes and self.boxes[kind][0] <= event.x <= self.boxes[kind][2]
-                    and self.boxes[kind][1] <= event.y <= self.boxes[kind][3]), None)
+        hit = self.hit(event)
         if hit:
             self.kind.set(hit)
             spec = self.layout_of(self.current)[hit]

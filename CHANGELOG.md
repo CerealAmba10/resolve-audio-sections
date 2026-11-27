@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.16
+
+- Also render the whole timeline as one clip: an option under Output adds `name full.mp4` and
+  `name fullT.mp4` (the whole timeline, or the whole cuts timeline) with its own teaser and thumbnail.
+- Thumbnail editor: double-click the title, TEASER label or extra text, or use the text box, to change its
+  words. Title and label text apply to that thumbnail only. New random title picks another line from the
+  titles file.
+
 ## 1.15
 
 - Fix full clips going dark right after the thumbnail when a clip fade-out was set: the fade started at the

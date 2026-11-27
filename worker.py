@@ -134,7 +134,7 @@ def _finish_clip(batch, job, full, frames, fps, output, thumb, seconds, folder):
     teaser_thumb = full_thumb = None
     if thumb:
         width, height = video_size(full)
-        label, layout = f"TEASER: {job['teaser_index']}", job.get('layout') or thumb.get('layout')
+        label, layout = job.get('label') or f"TEASER: {job['teaser_index']}", job.get('layout') or thumb.get('layout')
         teaser_thumb, full_thumb = folder / (job['teaser'] + '.png'), folder / (job['name'] + '.png')
         fonts = dict(font_path=thumb.get('title_font') or None, label_font=thumb.get('label_font') or None,
                      layout=layout, logo=thumb.get('logo') or None)

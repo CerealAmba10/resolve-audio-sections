@@ -101,6 +101,10 @@ Every clip, speech or quiet, gets a teaser with the same number: `name 3.mp4` an
 finishes that clip, while the rest are still rendering, so teasers appear in the export folder but not in
 Resolve's render queue. Each step is written to Documents → Audio Sections Plugin → log.txt.
 
+Tick **Also render the whole timeline as one clip** under Output to add `name full.mp4` and
+`name fullT.mp4`: the complete timeline (or cuts timeline) as one piece, with a teaser, fades and a
+thumbnail like every other clip.
+
 Numbering continues after the highest number already in the export folder or render
 queue. Existing files are never overwritten. Each Resolve project remembers the name and
 folder last used in it; a project's first run uses the project's name and "Audio Sections Exports"
@@ -127,6 +131,10 @@ tilt and visibility on the right. **All thumbnails** changes the batch layout; *
 adjusts one outlier (**Mirror this thumbnail** flips one left to right, **Reset** returns it to the
 batch). The batch layout is remembered for the project. **Next TEASER #** shows where the numbering continues for this timeline; **Reset to 1** starts
 it again. File numbers still follow the files already in the export folder.
+
+To change a thumbnail's words, double-click the title, TEASER label or extra text in the preview (or pick
+it on the right) and type in the text box. Title and label text change that thumbnail only; **New random
+title** picks another line from the titles file.
 
 Install the **Komika Axis** font (title and label) on each computer; otherwise a stand-in is used. **Title
 font** and **Label font** pick other font files. **Preview** opens a sample before rendering.
