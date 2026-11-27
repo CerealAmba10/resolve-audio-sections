@@ -1,4 +1,4 @@
-"""Thumbnail frames: a background picture, a big tilted title top-left and "TEASER: N" top-right.
+"""Thumbnail frames: a background picture with a tilted title, "TEASER: N", a logo and an extra text line.
 
 Styled like the Resolve Text+ layout it replaces: a fill, a thin black edge at 60%, a thick outer outline
 and a soft black shadow (pink title with a white outline; white label with a cyan outline).
@@ -142,42 +142,111 @@ def styled(lines, font, size, fill, outline, spacing=1.0, bold=0.025, ring=0.07,
     return block
 
 
-def render(background, title, label, width, height, font_path=None, tilt=3.0, label_font=None):
-    """The thumbnail frame. `label` (e.g. "TEASER: 12") goes top-right; empty to leave it off.
-    `font_path` is the title font, `label_font` the label's; both default to Komika Axis when installed."""
-    font_path = font_path or find_font('title')[0]
-    label_font = label_font or find_font('label')[0]
-    frame = cover(Image.open(background), width, height)
-    draw = ImageDraw.Draw(frame)
-    title = (title or '').upper()
-    if title:
-        # Biggest size whose wrapped block fits the top-left box: three lines like the example, four if it must.
-        box_w, box_h = width * 0.5, height * 0.45
+# Where each element sits: centre (x, y) as fractions of the frame, a size multiplier, rotation in degrees.
+# The extra text also carries its words in 'value'.
+DEFAULT_LAYOUT = {
+    'title': dict(x=0.30, y=0.24, size=1.0, angle=3.0, visible=True),
+    'label': dict(x=0.84, y=0.13, size=1.0, angle=0.0, visible=True),
+    'logo': dict(x=0.87, y=0.79, size=1.0, angle=0.0, visible=True),
+    'text': dict(x=0.17, y=0.87, size=1.0, angle=0.0, visible=True, value=''),
+}
+ELEMENTS = tuple(DEFAULT_LAYOUT)
+_blocks, _backgrounds = {}, {}
 
-        def fits(size, most):
-            font = ImageFont.truetype(font_path, size)
-            lines = wrap(title, font, box_w, draw)
-            block_h = round(size * 0.95) * (len(lines) - 1) + size
-            ok = len(lines) <= most and block_h <= box_h and max(draw.textlength(l, font=font) for l in lines) <= box_w
-            return ok and (font, lines)
 
-        sizes = range(round(height * 0.16), 8, -2)
-        font, lines = next((fit for s in sizes if s >= height * 0.08 for fit in [fits(s, 3)] if fit), None) or \
-            next(fit for s in sizes for fit in [fits(s, 4) or (s <= 10 and fits(s, 99))] if fit)
-        size = font.size
-        # Same crisp Text+ styling as the label, in pink with a white outline. Drawn at double size, tilted,
-        # then scaled down, so the rotation doesn't soften the edges.
-        big = styled(lines, ImageFont.truetype(font_path, size * 2), size * 2, PINK, WHITE, spacing=0.95, bold=0.04,
-                     top_glow=0.55)
-        big = big.rotate(tilt, resample=Image.BICUBIC, expand=True)
-        block = big.resize((big.width // 2, big.height // 2), Image.LANCZOS)
-        frame.paste(block, (round(width * 0.03 - size * 0.4), round(height * 0.06 - size * 0.75)), block)
-    if label:
-        size = round(height * 0.075)
-        font = ImageFont.truetype(label_font, size)
-        block = styled([label.upper()], font, size, WHITE, CYAN, bold=0.04)
-        frame.paste(block, (round(width * 0.95 - block.width + size * 0.5), round(height * 0.09 - size * 0.5)), block)
-    return frame
+def layout_with(layout=None, **changes):
+    """A complete layout: defaults, overlaid with `layout`, then with per-element `changes`."""
+    merged = {kind: dict(spec) for kind, spec in DEFAULT_LAYOUT.items()}
+    for source in (layout or {}, changes):
+        for kind, spec in source.items():
+            if kind in merged:
+                merged[kind].update(spec)
+    return merged
+
+
+def mirrored(layout):
+    """Left-right mirror image of a layout (positions and tilts)."""
+    return {kind: dict(spec, x=round(1 - spec['x'], 4), angle=-spec['angle']) for kind, spec in layout_with(layout).items()}
+
+
+def _tilted(block, angle):
+    return block.rotate(angle, resample=Image.BICUBIC, expand=True) if angle else block
+
+
+def _title_block(title, width, height, scale, font_path):
+    """Pink title wrapped to fit its box (three lines like the example, four if it must)."""
+    draw = ImageDraw.Draw(Image.new('L', (1, 1)))
+    box_w, box_h = width * 0.5 * scale, height * 0.45 * scale
+
+    def fits(size, most):
+        font = ImageFont.truetype(font_path, size)
+        lines = wrap(title, font, box_w, draw)
+        block_h = round(size * 0.95) * (len(lines) - 1) + size
+        ok = len(lines) <= most and block_h <= box_h and max(draw.textlength(l, font=font) for l in lines) <= box_w
+        return ok and (font, lines)
+
+    sizes = range(max(10, round(height * 0.16 * scale)), 8, -2)
+    font, lines = next((fit for s in sizes if s >= height * 0.08 * scale for fit in [fits(s, 3)] if fit), None) or         next(fit for s in sizes for fit in [fits(s, 4) or (s <= 10 and fits(s, 99))] if fit)
+    size = font.size * 2       # drawn at double size; scaled down after tilting so the edges stay crisp
+    return styled(lines, ImageFont.truetype(font_path, size), size, PINK, WHITE, spacing=0.95, bold=0.04, top_glow=0.55)
+
+
+def element_block(kind, spec, content, width, height, fonts):
+    """One element drawn, sized and tilted, ready to paste centred on its position (cached apart from position)."""
+    key = (kind, content, round(spec['size'], 3), round(spec['angle'], 2), width, height, fonts)
+    if key in _blocks:
+        return _blocks[key]
+    if len(_blocks) > 400:
+        _blocks.clear()
+    title_font, label_font = fonts
+    block = None
+    if kind == 'title' and content:
+        block = _title_block(content.upper(), width, height, spec['size'], title_font)
+    elif kind == 'label' and content:
+        size = round(height * 0.075 * spec['size']) * 2
+        block = styled([content.upper()], ImageFont.truetype(label_font, size), size, WHITE, CYAN, bold=0.04)
+    elif kind == 'text' and content:
+        size = round(height * 0.11 * spec['size']) * 2
+        impact = installed(('impact.ttf',)) or label_font
+        block = styled([content], ImageFont.truetype(impact, size), size, WHITE, (0, 0, 0), bold=0, outer=0.06,
+                       glow=0.04, glow_strength=0.35, rim_alpha=0)
+    elif kind == 'logo' and content:
+        picture = Image.open(content).convert('RGBA')
+        tall = max(2, round(height * 0.22 * spec['size'])) * 2
+        block = picture.resize((max(2, round(picture.width * tall / picture.height)), tall), Image.LANCZOS)
+    if block is not None:
+        block = _tilted(block, spec['angle'])
+        block = block.resize((max(1, block.width // 2), max(1, block.height // 2)), Image.LANCZOS)
+    _blocks[key] = block
+    return block
+
+
+def compose(background, title, label, width, height, layout=None, logo=None, font_path=None, label_font=None):
+    """The thumbnail frame and each visible element's box {kind: (left, top, right, bottom)} in pixels.
+    `label` (e.g. "TEASER: 12") and the extra text are left off when empty; fonts default to Komika Axis."""
+    fonts = (font_path or find_font('title')[0], label_font or find_font('label')[0])
+    layout = layout_with(layout)
+    key = (str(background), width, height)
+    if key not in _backgrounds:
+        if len(_backgrounds) > 8:
+            _backgrounds.clear()
+        _backgrounds[key] = cover(Image.open(background), width, height)
+    frame = _backgrounds[key].copy()
+    contents = dict(title=title or '', label=label or '', logo=str(logo) if logo else '', text=layout['text'].get('value', ''))
+    boxes = {}
+    for kind in ('logo', 'text', 'title', 'label'):
+        spec = layout[kind]
+        block = spec['visible'] and element_block(kind, spec, contents[kind], width, height, fonts)
+        if block:
+            left, top = round(spec['x'] * width - block.width / 2), round(spec['y'] * height - block.height / 2)
+            frame.paste(block, (left, top), block)
+            boxes[kind] = (left, top, left + block.width, top + block.height)
+    return frame, boxes
+
+
+def render(background, title, label, width, height, font_path=None, label_font=None, layout=None, logo=None):
+    """The thumbnail frame (see compose)."""
+    return compose(background, title, label, width, height, layout, logo, font_path, label_font)[0]
 
 
 if __name__ == '__main__':

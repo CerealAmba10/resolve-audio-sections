@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.13
+
+- Thumbnail layout editor: with thumbnails on, Render first opens a review of every thumbnail with its real
+  title and TEASER number. Drag the title, TEASER label, logo and extra text in a large preview and set
+  each one's size, tilt and visibility, for all thumbnails or for one; Mirror flips one thumbnail left to
+  right, Reset returns it to the batch layout. The batch layout is remembered per project.
+- Logo picture and an extra text line (Impact, white with a black outline) on thumbnails.
+- Next TEASER # in the Thumbnail panel shows where numbering continues, with Reset to 1.
+
 ## 1.12
 
 - Thumbnails: pick a background picture and a titles text file. Every clip and teaser opens on a thumbnail

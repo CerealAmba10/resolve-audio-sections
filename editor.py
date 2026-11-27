@@ -10,6 +10,8 @@ from tkinter import filedialog, messagebox, ttk
 import detection as d
 from updater import VERSION
 from media import STILL_TYPES, Cancelled, still_video, track_envelope
+from review import ThumbnailReview
+from thumbnail import layout_with
 
 ROLES = ('Primary', 'Background')
 RULER, CLIP_LANE, LANE = 22, 30, 58
@@ -223,27 +225,39 @@ class Editor:
         self.thumb_full_label = tk.BooleanVar(value=self.defaults.get('thumb_full_label', False))
         self.title_font = tk.StringVar(value=self.defaults.get('title_font', ''))
         self.label_font = tk.StringVar(value=self.defaults.get('label_font', ''))
+        self.thumb_logo = tk.StringVar(value=self.defaults.get('thumb_logo', ''))
+        self.thumb_layout = layout_with(self.defaults.get('thumb_layout'))
+        self.extra_text = tk.StringVar(value=self.thumb_layout['text'].get('value', ''))
         fonts = [('Fonts', '*.ttf *.otf *.ttc')]
         for row, (label, var, types) in enumerate([('Background', self.thumb_background, [('Pictures', '*.png *.jpg *.jpeg')]),
                                                    ('Titles (.txt)', self.thumb_titles, [('Text', '*.txt')]),
+                                                   ('Logo', self.thumb_logo, [('Pictures', '*.png *.jpg *.jpeg *.webp')]),
                                                    ('Title font', self.title_font, fonts),
                                                    ('Label font', self.label_font, fonts)]):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky='w')
             ttk.Entry(panel, textvariable=var, width=22).grid(row=row, column=1, sticky='ew', pady=1)
             ttk.Button(panel, text='…', width=3, command=lambda v=var, t=types: self.pick_file(v, t)).grid(
                 row=row, column=2, padx=(4, 0))
-        ttk.Label(panel, text='Show at start of all clips (s)').grid(row=4, column=0, columnspan=2, sticky='w')
-        ttk.Spinbox(panel, textvariable=self.thumb_seconds, from_=0, to=60, increment=0.5, width=6).grid(row=4, column=2)
+        ttk.Label(panel, text='Extra text').grid(row=5, column=0, sticky='w')
+        ttk.Entry(panel, textvariable=self.extra_text, width=22).grid(row=5, column=1, columnspan=2, sticky='ew', pady=1)
+        ttk.Label(panel, text='Show at start of all clips (s)').grid(row=6, column=0, columnspan=2, sticky='w')
+        ttk.Spinbox(panel, textvariable=self.thumb_seconds, from_=0, to=60, increment=0.5, width=6).grid(row=6, column=2)
         ttk.Checkbutton(panel, text='TEASER: N on full clips too', variable=self.thumb_full_label).grid(
-            row=5, column=0, columnspan=3, sticky='w')
+            row=7, column=0, columnspan=3, sticky='w')
         self.clip_thumb = tk.DoubleVar(value=1.0)
         self.clip_thumb_label = ttk.Label(panel, text='Selected clip (s)', foreground=COLORS['dim'])
-        self.clip_thumb_label.grid(row=6, column=0, columnspan=2, sticky='w')
+        self.teaser_next = tk.IntVar(value=self.defaults.get('teaser_next', 1))
+        ttk.Label(panel, text='Next TEASER #').grid(row=8, column=0, sticky='w')
+        counter = ttk.Frame(panel)
+        counter.grid(row=8, column=1, columnspan=2, sticky='w', pady=1)
+        ttk.Spinbox(counter, textvariable=self.teaser_next, from_=1, to=99999, increment=1, width=6).pack(side='left')
+        ttk.Button(counter, text='Reset to 1', command=lambda: self.teaser_next.set(1)).pack(side='left', padx=(6, 0))
+        self.clip_thumb_label.grid(row=9, column=0, columnspan=2, sticky='w')
         self.clip_thumb_box = ttk.Spinbox(panel, textvariable=self.clip_thumb, from_=0, to=60, increment=0.5, width=6,
                                           state='disabled')
-        self.clip_thumb_box.grid(row=6, column=2)
+        self.clip_thumb_box.grid(row=9, column=2)
         actions = ttk.Frame(panel)
-        actions.grid(row=7, column=0, columnspan=3, sticky='ew', pady=(4, 0))
+        actions.grid(row=10, column=0, columnspan=3, sticky='ew', pady=(4, 0))
         self.clip_thumb_reset = ttk.Button(actions, text='Use all-clips value', state='disabled', command=self.reset_clip_thumb)
         self.clip_thumb_reset.pack(side='left')
         ttk.Button(actions, text='Preview', command=self.preview_thumbnail).pack(side='right')
@@ -300,7 +314,8 @@ class Editor:
             return None
         return dict(background=background, titles=self.thumb_titles.get().strip(), seconds=self.thumb_default(),
                     full_label=bool(self.thumb_full_label.get()), title_font=self.title_font.get().strip(),
-                    label_font=self.label_font.get().strip())
+                    label_font=self.label_font.get().strip(), logo=self.thumb_logo.get().strip(),
+                    layout=layout_with(self.thumb_layout, text=dict(value=self.extra_text.get())))
 
     def preview_thumbnail(self):
         thumb = self.thumb_settings()
@@ -313,8 +328,8 @@ class Editor:
             width, height = int(self.request['timeline'].get('width') or 1920), int(self.request['timeline'].get('height') or 1080)
             target = self.home / 'thumbnail preview.png'
             target.parent.mkdir(parents=True, exist_ok=True)
-            render(thumb['background'], title, 'TEASER: 1', width, height, thumb['title_font'] or None,
-                   label_font=thumb['label_font'] or None).save(target)
+            render(thumb['background'], title, f'TEASER: {self.next_teaser()}', width, height, thumb['title_font'] or None,
+                   label_font=thumb['label_font'] or None, layout=thumb['layout'], logo=thumb['logo'] or None).save(target)
             missing = [name for kind, name in (('title', 'Komika Axis'),) if not find_font(kind)[1]]
             if missing:
                 self.status.set(f"{' and '.join(missing)} not installed on this computer, so a stand-in font is used.")
@@ -629,6 +644,7 @@ class Editor:
             return messagebox.showerror('Folder', 'Choose an output folder.', parent=self.win)
         thumb = self.thumb_settings()
         for label, path in (('background picture', thumb and thumb['background']), ('titles file', thumb and thumb['titles']),
+                            ('logo', thumb and thumb['logo']),
                             ('title font', thumb and thumb['title_font']), ('label font', thumb and thumb['label_font'])):
             if path and not Path(path).is_file():
                 return messagebox.showerror('Thumbnail', f'The {label} was not found:\n{path}', parent=self.win)
@@ -657,13 +673,39 @@ class Editor:
                           fade=self.setting('fade'), clip_fade=self.setting('clip_fade'))
             threading.Thread(target=self.prepare_stills, args=(clips, teaser_frames, record), daemon=True).start()
             return
+        if thumb:
+            # Titles and TEASER numbers are fixed now, so the review shows exactly what gets rendered.
+            from thumbnail import deal_titles, load_titles
+            titles = deal_titles(load_titles(thumb['titles']), len(jobs)) if thumb['titles'] else []
+            for n, job in enumerate(jobs):
+                job.update(title=titles[n] if n < len(titles) else '', teaser_index=self.next_teaser() + n)
+            self.win.withdraw()
+            return ThumbnailReview(self.win, jobs, thumb, lambda: self.send_render(stem, folder, teaser_frames, jobs, thumb),
+                                   lambda: self.back_from_review(thumb))
+        self.send_render(stem, folder, teaser_frames, jobs, thumb)
+
+    def back_from_review(self, thumb):
+        """Keep the batch layout edited in the review (and its extra text) when going back to the window."""
+        self.thumb_layout = thumb['layout']
+        self.quiet = True
+        self.extra_text.set(thumb['layout']['text'].get('value', ''))
+        self.quiet = False
+        self.win.deiconify()
+
+    def next_teaser(self):
+        try:
+            return max(1, int(self.teaser_next.get()))
+        except (tk.TclError, ValueError):
+            return 1
+
+    def send_render(self, stem, folder, teaser_frames, jobs, thumb):
         roles = dict(self.settings.get('roles', {}))
         roles.update({t['name'] or f"A{t['index']}": t['role'].get() for t in self.tracks})
         self.settings.update({key: self.setting(key) for key in d.DEFAULTS}, roles=roles, pauses=self.pauses.get())
         self.cancel.set()
         self.win.destroy()
         self.on_render(dict(stem=stem, output=str(folder), fps=str(self.fps), teaser_frames=teaser_frames,
-                            thumb=self.thumb_settings(),
+                            thumb=thumb,
                             fade=self.setting('fade'), clip_fade=self.setting('clip_fade'), jobs=jobs,
                             timeline=self.target['name'] if self.target else None,
                             tracks={t['label']: dict(role=t['role'].get(), threshold=self.threshold(t))

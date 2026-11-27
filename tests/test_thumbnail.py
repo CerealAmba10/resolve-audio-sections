@@ -36,6 +36,27 @@ class ThumbnailTest(unittest.TestCase):
         self.assertTrue(pink and max(x for x, _ in pink) < 640 * 0.55 and max(y for _, y in pink) < 360 * 0.55)
         self.assertTrue(cyan and min(x for x, _ in cyan) > 640 * 0.6 and max(y for _, y in cyan) < 360 * 0.25)
 
+    def test_mirrored_layout_puts_title_right_and_label_left(self):
+        frame = thumbnail.render(self.background, 'Good girl', 'TEASER: 3', 640, 360, layout=thumbnail.mirrored(None))
+        pink = [x for y in range(0, 180, 3) for x in range(0, 640, 3)
+                if (lambda p: p[0] > 230 and 50 < p[1] < 110 and p[2] > 170)(frame.getpixel((x, y)))]
+        cyan = [x for y in range(0, 90, 3) for x in range(0, 640, 3)
+                if (lambda p: p[0] < 80 and p[1] > 150 and p[2] > 230)(frame.getpixel((x, y)))]
+        self.assertTrue(pink and max(pink) > 640 * 0.85 and sum(pink) / len(pink) > 640 * 0.5)
+        self.assertTrue(cyan and max(cyan) < 640 * 0.4)
+
+    def test_logo_and_extra_text_are_placed_and_can_be_hidden(self):
+        logo = self.folder / 'logo.png'
+        Image.new('RGBA', (200, 100), (255, 200, 0, 255)).save(logo)
+        layout = thumbnail.layout_with(text=dict(value='GEMINI', x=0.2, y=0.85), logo=dict(x=0.8, y=0.8, angle=10))
+        frame, boxes = thumbnail.compose(self.background, 'Hello', 'TEASER: 1', 640, 360, layout, logo)
+        self.assertEqual(set(boxes), {'title', 'label', 'logo', 'text'})
+        left, top, right, bottom = boxes['text']
+        self.assertAlmostEqual((left + right) / 2 / 640, 0.2, delta=0.01)
+        self.assertEqual(frame.getpixel((round(0.8 * 640), round(0.8 * 360))), (255, 200, 0))   # logo centred there
+        hidden = thumbnail.layout_with(layout, logo=dict(visible=False))
+        self.assertNotIn('logo', thumbnail.compose(self.background, 'Hello', '', 640, 360, hidden, logo)[1])
+
     @unittest.skipUnless(shutil.which('ffmpeg'), 'needs ffmpeg on PATH')
     def test_teaser_opens_on_thumbnail_then_shows_the_clip(self):
         full = self.folder / 'full.mp4'

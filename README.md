@@ -116,6 +116,15 @@ outline, where N counts the teasers made from that timeline. Tick **TEASER: N on
 the number on full clips as well. Select a clip in the list to give it its own duration (0 = only the
 cover picture). The thumbnail is also embedded as each MP4's cover and saved beside it as a .png.
 
+Add a **Logo** picture and an **Extra text** line (Impact, white with a black outline) if you like.
+
+When you click Render, a review window shows every thumbnail as it will be made. Pick a thumbnail on the
+left; in the large preview drag the title, TEASER label, logo or extra text to move it, and set its size,
+tilt and visibility on the right. **All thumbnails** changes the batch layout; **This thumbnail only**
+adjusts one outlier (**Mirror this thumbnail** flips one left to right, **Reset** returns it to the
+batch). The batch layout is remembered for the project. **Next TEASER #** shows where the numbering continues for this timeline; **Reset to 1** starts
+it again. File numbers still follow the files already in the export folder.
+
 Install the **Komika Axis** font (title and label) on each computer; otherwise a stand-in is used. **Title
 font** and **Label font** pick other font files. **Preview** opens a sample before rendering.
 These settings are remembered per Resolve project.

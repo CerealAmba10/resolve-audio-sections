@@ -123,9 +123,10 @@ def finish_clip(batch, job):
     thumb, seconds = batch.get('thumb'), job.get('thumb_seconds', 0)
     if thumb:
         width, height = video_size(full)
-        label = f"TEASER: {job['teaser_index']}"
+        label, layout = f"TEASER: {job['teaser_index']}", job.get('layout') or thumb.get('layout')
         teaser_thumb, full_thumb = output / (job['teaser'] + '.png'), output / (job['name'] + '.png')
-        fonts = dict(font_path=thumb.get('title_font') or None, label_font=thumb.get('label_font') or None)
+        fonts = dict(font_path=thumb.get('title_font') or None, label_font=thumb.get('label_font') or None,
+                     layout=layout, logo=thumb.get('logo') or None)
         render_thumbnail(thumb['background'], job.get('title', ''), label, width, height, **fonts).save(teaser_thumb)
         render_thumbnail(thumb['background'], job.get('title', ''), label if thumb.get('full_label') else '',
                          width, height, **fonts).save(full_thumb)
@@ -287,6 +288,7 @@ class Worker:
             remembered = self.settings.get('projects', {}).get(project_key(request), {})
             names = {**(record or {}), **remembered}
             names.setdefault('stem', request.get('project') or '')
+            names['teaser_next'] = self.settings.get('teaser_counts', {}).get(timeline_key(request), 0) + 1
             self.editor = Editor(self.root, request, self.settings, self.render, self.cancelled, self.send,
                                  pieces=record and pieces_of(request['timeline']), defaults=names, home=self.home,
                                  check_updates=self.check_now)
@@ -337,7 +339,8 @@ class Worker:
         if thumb:
             remembered.update(thumb_background=thumb['background'], thumb_titles=thumb['titles'],
                               thumb_seconds=thumb['seconds'], thumb_full_label=thumb['full_label'],
-                              title_font=thumb.get('title_font', ''), label_font=thumb.get('label_font', ''))
+                              title_font=thumb.get('title_font', ''), label_font=thumb.get('label_font', ''),
+                              thumb_logo=thumb.get('logo', ''), thumb_layout=thumb.get('layout'))
         try:
             self.settings_file.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
         except OSError:
@@ -349,11 +352,11 @@ class Worker:
             # Next "TEASER: N" numbers for this timeline, and one title per clip pair from the titles file.
             counts = self.settings.setdefault('teaser_counts', {})
             key = timeline_key(self.request)
-            titles = deal_titles(load_titles(batch['thumb']['titles']), len(batch['jobs'])) if batch['thumb']['titles'] else []
-            for n, job in enumerate(batch['jobs']):
-                job['teaser_index'] = counts.get(key, 0) + n + 1
-                job['title'] = titles[n] if n < len(titles) else ''
-            counts[key] = counts.get(key, 0) + len(batch['jobs'])
+            if not all('teaser_index' in job for job in batch['jobs']):     # reviewed jobs already carry them
+                titles = deal_titles(load_titles(batch['thumb']['titles']), len(batch['jobs'])) if batch['thumb']['titles'] else []
+                for n, job in enumerate(batch['jobs']):
+                    job.update(teaser_index=counts.get(key, 0) + n + 1, title=titles[n] if n < len(titles) else '')
+            counts[key] = max(job['teaser_index'] for job in batch['jobs'])
         self.remember_project(batch['stem'], batch['output'], batch.get('thumb'))     # also saves the other settings
         batches = self.home / 'batches'
         batches.mkdir(exist_ok=True)
